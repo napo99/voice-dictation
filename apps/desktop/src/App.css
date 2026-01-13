@@ -1,0 +1,268 @@
+/* Voice-Dict Desktop App Styles */
+
+:root {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --text-primary: #eee;
+  --text-secondary: #888;
+  --accent: #e94560;
+  --accent-hover: #ff6b6b;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --error: #ef4444;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 24px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+header h1 {
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+header .subtitle {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Status Section */
+.status-section {
+  display: flex;
+  justify-content: center;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.status-indicator.idle .status-dot {
+  background: var(--text-secondary);
+}
+
+.status-indicator.listening .status-dot {
+  background: var(--warning);
+  animation: pulse 1s infinite;
+}
+
+.status-indicator.recording .status-dot {
+  background: var(--accent);
+  animation: pulse 0.5s infinite;
+}
+
+.status-indicator.processing .status-dot {
+  background: var(--accent);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Models Section */
+.models-section {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.models-section h2 {
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.models-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.models-info code {
+  display: block;
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-primary);
+  border-radius: 6px;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.models-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.models-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.models-list li.downloaded {
+  opacity: 0.7;
+}
+
+.model-name {
+  flex: 1;
+}
+
+.model-size {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.model-status {
+  font-size: 16px;
+}
+
+.download-hint {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Controls Section */
+.controls-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+button {
+  padding: 14px 32px;
+  font-size: 16px;
+  font-weight: 500;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.record-button {
+  background: var(--accent);
+  color: white;
+}
+
+.record-button:hover {
+  background: var(--accent-hover);
+  transform: scale(1.02);
+}
+
+.stop-button {
+  background: var(--warning);
+  color: var(--bg-primary);
+}
+
+.stop-button:hover {
+  opacity: 0.9;
+}
+
+.cancel-button {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--text-secondary);
+  padding: 10px 24px;
+  font-size: 14px;
+}
+
+.cancel-button:hover {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+}
+
+.processing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  background: var(--bg-secondary);
+  border-radius: 10px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--text-secondary);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Error Section */
+.error-section {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--error);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.error-section p {
+  flex: 1;
+  color: var(--error);
+  font-size: 14px;
+}
+
+.error-section button {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Footer */
+footer {
+  text-align: center;
+  padding-top: 24px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}

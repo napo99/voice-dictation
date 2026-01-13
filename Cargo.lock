@@ -4829,14 +4829,8 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "thiserror 2.0.17",
- "tokio",
  "tracing",
- "vd-audio",
  "vd-core",
- "vd-inject",
- "vd-polish",
- "vd-vad",
- "vd-whisper",
 ]
 
 [[package]]
