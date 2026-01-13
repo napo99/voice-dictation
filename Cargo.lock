@@ -5859,6 +5859,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "crossbeam-channel",
+ "libc",
  "thiserror 2.0.17",
  "tracing",
  "vd-core",
