@@ -13,17 +13,17 @@
     "windows": [
       {
         "title": "Voice-Dict",
-        "width": 320,
-        "height": 52,
+        "width": 400,
+        "height": 120,
         "x": 100,
         "y": 100,
         "resizable": false,
         "fullscreen": false,
-        "decorations": false,
-        "transparent": true,
+        "decorations": true,
+        "transparent": false,
         "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "shadow": false
+        "skipTaskbar": false,
+        "shadow": true
       }
     ],
     "security": {

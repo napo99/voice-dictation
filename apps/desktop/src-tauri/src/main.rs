@@ -14,11 +14,11 @@ mod pipeline;
 
 use std::sync::{Arc, Mutex};
 use tauri::{
-    AppHandle, Emitter, Listener, Manager, State, WebviewWindow,
-    WebviewWindowBuilder, LogicalPosition, LogicalSize,
+    AppHandle, Emitter, State, WebviewWindow,
+    WebviewWindowBuilder,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use pipeline::{Pipeline, PipelineConfig, PipelineEvent, PipelineState};
@@ -155,8 +155,16 @@ fn update_position(state: State<AppState>, pos: PositionUpdate) {
 #[tauri::command]
 fn check_models() -> bool {
     let models_dir = vd_core::models_dir();
-    let vad_exists = models_dir.join(vd_core::SILERO_VAD_MODEL.path).exists();
-    let whisper_exists = models_dir.join(vd_core::WhisperModel::Base.filename()).exists();
+    let vad_path = models_dir.join(vd_core::SILERO_VAD_MODEL.path);
+    let whisper_path = models_dir.join(vd_core::WhisperModel::Base.filename());
+
+    let vad_exists = vad_path.exists();
+    let whisper_exists = whisper_path.exists();
+
+    info!("=== Model Check ===");
+    info!("VAD model: {:?} -> {}", vad_path, if vad_exists { "FOUND" } else { "MISSING" });
+    info!("Whisper model: {:?} -> {}", whisper_path, if whisper_exists { "FOUND" } else { "MISSING" });
+
     vad_exists && whisper_exists
 }
 
@@ -166,11 +174,36 @@ fn get_models_dir() -> String {
     vd_core::models_dir().display().to_string()
 }
 
+/// List available audio input devices
+#[tauri::command]
+fn list_audio_devices() -> Vec<String> {
+    info!("=== Listing Audio Devices ===");
+    match vd_audio::list_input_devices() {
+        Ok(devices) => {
+            let mut result = Vec::new();
+            for device in &devices {
+                let marker = if device.is_default { " [DEFAULT]" } else { "" };
+                info!("  - {}{}", device.name, marker);
+                result.push(format!("{}{}", device.name, marker));
+            }
+            if devices.is_empty() {
+                warn!("No audio input devices found!");
+            }
+            result
+        }
+        Err(e) => {
+            warn!("Failed to list audio devices: {}", e);
+            vec![format!("Error: {}", e)]
+        }
+    }
+}
+
 // ============================================================================
 // Window Setup
 // ============================================================================
 
 /// Create the floating pill window
+#[allow(dead_code)]
 fn create_pill_window(app: &AppHandle) -> Result<WebviewWindow, tauri::Error> {
     let window = WebviewWindowBuilder::new(
         app,
@@ -195,44 +228,73 @@ fn create_pill_window(app: &AppHandle) -> Result<WebviewWindow, tauri::Error> {
 // ============================================================================
 
 fn main() {
-    // Initialize logging
+    // Initialize logging with VERBOSE output
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,voice_dict=debug")),
+                .unwrap_or_else(|_| EnvFilter::new("debug,voice_dict_desktop=trace,vd_audio=debug,vd_vad=debug,vd_whisper=debug")),
         )
+        .with_target(true)
+        .with_line_number(true)
         .init();
 
+    info!("========================================");
     info!("Starting Voice-Dict");
+    info!("========================================");
+
+    // Log system info
+    info!("Platform: {}", std::env::consts::OS);
+    info!("Arch: {}", std::env::consts::ARCH);
 
     // Ensure models directory exists
     let models_dir = vd_core::models_dir();
+    info!("Models directory: {:?}", models_dir);
     if let Err(e) = std::fs::create_dir_all(&models_dir) {
         warn!("Failed to create models directory: {}", e);
     }
+
+    // List audio devices at startup
+    info!("=== Audio Input Devices ===");
+    match vd_audio::list_input_devices() {
+        Ok(devices) => {
+            for device in &devices {
+                let marker = if device.is_default { " [DEFAULT]" } else { "" };
+                info!("  🎤 {}{}", device.name, marker);
+            }
+            if devices.is_empty() {
+                warn!("⚠️  No audio input devices found! Check your microphone connection.");
+            }
+        }
+        Err(e) => {
+            warn!("Failed to list audio devices: {}", e);
+        }
+    }
+    info!("============================");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState::default())
         .setup(|app| {
-            let app_handle = app.handle().clone();
-
             // Register global hotkey (Ctrl+Shift+Space)
             use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-            let shortcut: Shortcut = "CommandOrControl+Shift+Space".parse().unwrap();
+            let shortcut: Shortcut = "Alt+Shift+V".parse().unwrap();
 
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
-                    .with_handler(move |_app, shortcut, event| {
+                    .with_handler(move |_app, _shortcut, event| {
                         match event.state() {
                             ShortcutState::Pressed => {
-                                info!("Global hotkey pressed");
+                                info!("===========================================");
+                                info!(">>> HOTKEY PRESSED - Starting recording <<<");
+                                info!("===========================================");
                                 let _ = _app.emit("hotkey-pressed", ());
                             }
                             ShortcutState::Released => {
-                                info!("Global hotkey released");
+                                info!("===========================================");
+                                info!(">>> HOTKEY RELEASED - Stopping recording <<<");
+                                info!("===========================================");
                                 let _ = _app.emit("hotkey-released", ());
                             }
                         }
@@ -241,7 +303,7 @@ fn main() {
             )?;
 
             app.global_shortcut().register(shortcut)?;
-            info!("Registered global shortcut: Ctrl+Shift+Space");
+            info!("Registered global shortcut: Alt+Shift+V");
 
             Ok(())
         })
@@ -253,6 +315,7 @@ fn main() {
             update_position,
             check_models,
             get_models_dir,
+            list_audio_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

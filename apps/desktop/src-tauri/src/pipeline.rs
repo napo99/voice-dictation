@@ -8,7 +8,7 @@
 use crossbeam_channel::{bounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use vd_audio::{AudioCapture, AudioCaptureConfig};
 use vd_core::{
-    AudioBuffer, AudioChunk, TranscriptionResult, VadConfig, VadEvent,
+    AudioBuffer, AudioChunk, VadConfig, VadEvent,
     VoiceDictError, WhisperModel, SAMPLE_RATE,
 };
 use vd_inject::TextInjector;
@@ -323,8 +323,10 @@ fn run_pipeline_worker(
     loop {
         match command_rx.recv() {
             Ok(PipelineCommand::StartRecording) => {
-                info!("Starting recording");
+                info!("=========== START RECORDING ===========");
+                info!("Pipeline received StartRecording command");
                 set_state(PipelineState::Listening);
+                info!("State -> Listening");
                 audio_buffer.clear();
                 *transcript.lock().unwrap() = String::new();
 
@@ -339,13 +341,16 @@ fn run_pipeline_worker(
                 }
 
                 // Start audio capture
+                info!("Initializing audio capture...");
                 if audio_capture.is_none() {
                     let audio_config = AudioCaptureConfig {
                         device_name: config.input_device.clone(),
                         ..Default::default()
                     };
+                    info!("Audio config: {:?}", audio_config);
                     match AudioCapture::new(audio_config, audio_tx.clone()) {
                         Ok(mut capture) => {
+                            info!("AudioCapture created successfully");
                             if let Err(e) = capture.start() {
                                 emit(PipelineEvent::Error(format!(
                                     "Failed to start audio: {}",
@@ -354,6 +359,7 @@ fn run_pipeline_worker(
                                 set_state(PipelineState::Idle);
                                 continue;
                             }
+                            info!("Audio capture STARTED");
                             audio_capture = Some(capture);
                         }
                         Err(e) => {
@@ -426,9 +432,10 @@ fn run_pipeline_worker(
                             match v.process(&chunk.samples) {
                                 Ok(VadEvent::SpeechStart) => {
                                     if !speech_detected {
-                                        info!("Speech detected");
+                                        info!("!!! SPEECH DETECTED - VAD triggered !!!");
                                         speech_detected = true;
                                         set_state(PipelineState::Recording);
+                                        info!("State -> Recording");
                                     }
                                 }
                                 Ok(VadEvent::SpeechEnd) => {
@@ -487,8 +494,14 @@ fn run_pipeline_worker(
                 }
 
                 set_state(PipelineState::Processing);
+                info!("State -> Processing");
+                info!("Audio buffer: {} samples ({:.2}s)",
+                    audio_buffer.samples().len(),
+                    audio_buffer.samples().len() as f32 / SAMPLE_RATE as f32
+                );
 
                 // Transcribe
+                info!(">>> Starting Whisper transcription...");
                 let transcribed_text = if let Some(ref w) = whisper {
                     match w.transcribe(audio_buffer.samples()) {
                         Ok(result) => {
@@ -531,6 +544,8 @@ fn run_pipeline_worker(
 
                 // Inject the text
                 set_state(PipelineState::Injecting);
+                info!("State -> Injecting");
+                info!(">>> Injecting text: \"{}\"", polished_text);
 
                 if let Some(ref mut inj) = injector {
                     // Small delay before injection to allow user to release hotkey
@@ -607,7 +622,6 @@ fn calculate_audio_level(samples: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn test_pipeline_state_transitions() {

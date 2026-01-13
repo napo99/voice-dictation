@@ -222,7 +222,7 @@ function App() {
       case 'Injecting':
         return 'Injecting...';
       default:
-        return 'Press Ctrl+Shift+Space';
+        return 'Press Alt+Shift+V';
     }
   };
 
@@ -254,6 +254,27 @@ function App() {
     );
   }
 
+  // Manual record handlers (for testing without hotkey)
+  const handleRecordStart = async () => {
+    console.log('Manual record start clicked');
+    try {
+      await invoke('start_recording');
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleRecordStop = async () => {
+    console.log('Manual record stop clicked');
+    try {
+      await invoke('stop_recording');
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   // Normal pill
   return (
     <div
@@ -278,7 +299,47 @@ function App() {
         <span className="text">{getStatusText()}</span>
       </div>
 
-      <button className="settings-button" title="Settings">
+      {/* Manual record button for testing */}
+      <button
+        className="record-button"
+        title={status.is_recording ? "Stop Recording" : "Start Recording"}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          handleRecordStart();
+        }}
+        onMouseUp={(e) => {
+          e.stopPropagation();
+          handleRecordStop();
+        }}
+        onMouseLeave={() => {
+          if (status.is_recording) {
+            handleRecordStop();
+          }
+        }}
+      >
+        {status.is_recording ? '⏹' : '🎤'}
+      </button>
+
+      <button
+        className="settings-button"
+        title="Settings"
+        onClick={async (e) => {
+          e.stopPropagation();
+          try {
+            const devices = await invoke<string[]>('list_audio_devices');
+            const deviceList = devices.length > 0
+              ? devices.map(d => `  • ${d}`).join('\n')
+              : '  (No devices found)';
+            alert(`Voice-Dict Settings\n\n` +
+              `Hotkey: Alt+Shift+V (may not work in WSL2)\n\n` +
+              `Audio Input Devices:\n${deviceList}\n\n` +
+              `Model: Whisper base.en\n\n` +
+              `Tip: Hold the 🎤 button to record!`);
+          } catch (err) {
+            alert(`Settings Error: ${err}`);
+          }
+        }}
+      >
         ⚙
       </button>
     </div>

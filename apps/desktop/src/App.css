@@ -92,9 +92,20 @@ html, body, #root {
   transition: transform 0.1s ease, opacity 0.1s ease;
 }
 
-/* State-based dot colors */
+/* State-based styles - VERY OBVIOUS colors */
+.pill.idle {
+  background: #1a1a2e;
+  border-color: #6b7280;
+}
+
 .pill.idle .dot {
   background: var(--accent-idle);
+}
+
+.pill.listening {
+  background: #3d3200;
+  border-color: #fbbf24;
+  border-width: 2px;
 }
 
 .pill.listening .dot {
@@ -102,14 +113,32 @@ html, body, #root {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.pill.recording {
+  background: #3d0a0a;
+  border-color: #ef4444;
+  border-width: 3px;
+}
+
 .pill.recording .dot {
   background: var(--accent-recording);
   animation: pulse 0.8s ease-in-out infinite;
 }
 
+.pill.processing {
+  background: #0a1a3d;
+  border-color: #3b82f6;
+  border-width: 2px;
+}
+
 .pill.processing .dot {
   background: var(--accent-processing);
   animation: spin 1s linear infinite;
+}
+
+.pill.injecting {
+  background: #0a3d1a;
+  border-color: #10b981;
+  border-width: 2px;
 }
 
 .pill.injecting .dot {
@@ -157,6 +186,29 @@ html, body, #root {
 /* ============================================================================
    Buttons
    ============================================================================ */
+
+.record-button {
+  background: rgba(239, 68, 68, 0.2);
+  border: 2px solid #ef4444;
+  color: #ef4444;
+  font-size: 18px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  margin-right: 4px;
+}
+
+.record-button:hover {
+  background: rgba(239, 68, 68, 0.4);
+  transform: scale(1.1);
+}
+
+.record-button:active {
+  background: #ef4444;
+  color: white;
+  transform: scale(0.95);
+}
 
 .settings-button {
   background: transparent;
