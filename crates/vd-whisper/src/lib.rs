@@ -57,6 +57,8 @@ impl WhisperTranscriber {
             )));
         }
 
+        whisper_rs::install_whisper_tracing_trampoline();
+        info!("Whisper system info: {}", whisper_rs::print_system_info());
         info!("Loading Whisper model from: {}", model_path.display());
 
         let mut params = WhisperContextParameters::default();
@@ -64,14 +66,19 @@ impl WhisperTranscriber {
             .map(|value| value != "0")
             .unwrap_or(true);
         params.use_gpu(want_gpu);
-        let gpu_available = unsafe { whisper_rs::whisper_rs_sys::ggml_cpu_has_gpublas() } != 0;
-        if want_gpu && !gpu_available {
-            warn!("Whisper GPU requested but ggml reports no GPU BLAS support");
-        }
+
+        // Check CUDA availability at runtime
+        let gpu_blas = unsafe { whisper_rs::whisper_rs_sys::ggml_cpu_has_gpublas() } != 0;
+        let cublas = unsafe { whisper_rs::whisper_rs_sys::ggml_cpu_has_cublas() } != 0;
+
         info!(
-            "Whisper GPU: requested={} available={}",
-            want_gpu, gpu_available
+            "Whisper GPU check: requested={}, gpu_blas={}, cublas={}",
+            want_gpu, gpu_blas, cublas
         );
+
+        if want_gpu && !gpu_blas {
+            warn!("GPU requested but ggml reports no GPU BLAS support - check CUDA DLLs in PATH");
+        }
         let ctx = WhisperContext::new_with_params(
             model_path.to_str().ok_or_else(|| {
                 TranscriptionError::ModelLoadError("Invalid model path encoding".to_string())

@@ -30,3 +30,13 @@ models/
 
 # Logs
 *.log
+
+# Temp files from Claude/editors
+tmpclaude-*
+**/tmpclaude-*
+nul
+
+# Windows-specific
+*.exe
+*.dll
+*.pdb

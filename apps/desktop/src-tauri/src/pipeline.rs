@@ -247,6 +247,12 @@ fn run_pipeline_worker(
     let mut total_gap_samples: usize = 0;
     let mut last_audio_rx_at = Instant::now();
 
+    // Jitter tracking for diagnostics
+    let mut chunk_intervals_ms: Vec<f32> = Vec::new();
+    let mut last_chunk_rx_time: Option<Instant> = None;
+    let mut gaps_over_50ms: usize = 0;
+    let mut total_chunks_received: usize = 0;
+
     // Channel for receiving audio from capture thread - unbounded to prevent dropping samples
     let (audio_tx, audio_rx) = crossbeam_channel::unbounded::<AudioChunk>();
 
@@ -359,6 +365,11 @@ fn run_pipeline_worker(
                 last_chunk_end_ms = None;
                 total_gap_samples = 0;
                 last_audio_rx_at = Instant::now();
+                // Reset jitter tracking
+                chunk_intervals_ms.clear();
+                last_chunk_rx_time = None;
+                gaps_over_50ms = 0;
+                total_chunks_received = 0;
                 *transcript.lock().unwrap() = String::new();
 
                 // Initialize components if needed
@@ -429,7 +440,19 @@ fn run_pipeline_worker(
                     }
 
                     let mut process_chunk = |chunk: AudioChunk| {
-                        last_audio_rx_at = Instant::now();
+                        let now = Instant::now();
+                        last_audio_rx_at = now;
+                        total_chunks_received += 1;
+
+                        // Track inter-chunk arrival time for jitter analysis
+                        if let Some(last_rx) = last_chunk_rx_time {
+                            let interval_ms = last_rx.elapsed().as_secs_f32() * 1000.0;
+                            chunk_intervals_ms.push(interval_ms);
+                            if interval_ms > 50.0 {
+                                gaps_over_50ms += 1;
+                            }
+                        }
+                        last_chunk_rx_time = Some(now);
 
                         if native_sample_rate != chunk.sample_rate {
                             if audio_buffer.is_empty() {
@@ -619,6 +642,31 @@ fn run_pipeline_worker(
                     );
                 }
 
+                // Calculate and log jitter statistics
+                let (jitter_p95, jitter_max, jitter_avg) = if !chunk_intervals_ms.is_empty() {
+                    let mut sorted = chunk_intervals_ms.clone();
+                    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let p95_idx = (sorted.len() as f32 * 0.95) as usize;
+                    let p95 = sorted.get(p95_idx.min(sorted.len() - 1)).copied().unwrap_or(0.0);
+                    let max = sorted.last().copied().unwrap_or(0.0);
+                    let avg = sorted.iter().sum::<f32>() / sorted.len() as f32;
+                    (p95, max, avg)
+                } else {
+                    (0.0, 0.0, 0.0)
+                };
+                let gap_ratio = if audio_duration_secs > 0.0 {
+                    (total_gap_samples as f32 / native_sample_rate as f32) / audio_duration_secs * 100.0
+                } else {
+                    0.0
+                };
+                info!(
+                    "=== AUDIO JITTER SUMMARY: chunks={} avg={:.1}ms p95={:.1}ms max={:.1}ms gaps>50ms={} gap_ratio={:.1}% ===",
+                    total_chunks_received, jitter_avg, jitter_p95, jitter_max, gaps_over_50ms, gap_ratio
+                );
+                if gap_ratio > 20.0 {
+                    warn!("HIGH GAP RATIO ({:.1}%): Likely Bluetooth/device dropout issue. Try wired/USB mic.", gap_ratio);
+                }
+
                 // Create debug directory
                 let debug_dir = vd_core::models_dir().parent().unwrap().join("debug");
                 let _ = std::fs::create_dir_all(&debug_dir);
@@ -683,10 +731,14 @@ fn run_pipeline_worker(
                     0.0
                 };
                 let log_entry = format!(
-                    "[{}] audio={:.2}s gap={:.2}s proc={}ms conf={:.2} wav={} text=\"{}\"\n",
+                    "[{}] audio={:.2}s gap={:.2}s gap_ratio={:.1}% jitter_p95={:.1}ms jitter_max={:.1}ms gaps>50ms={} proc={}ms conf={:.2} wav={} text=\"{}\"\n",
                     timestamp,
                     audio_duration_secs,
                     gap_secs,
+                    gap_ratio,
+                    jitter_p95,
+                    jitter_max,
+                    gaps_over_50ms,
                     result.processing_time_ms,
                     result.confidence,
                     wav_filename,
