@@ -65,37 +65,99 @@ WSL2 has fundamental limitations:
 
 ### Prerequisites
 
-1. **Rust** (with MSVC toolchain)
-   ```powershell
-   # Download from https://rustup.rs/
-   # Or via winget:
-   winget install Rustlang.Rustup
+#### 1. Node.js and npm
 
-   # Verify
-   rustc --version
-   cargo --version
+**Option A - Direct Download (Recommended):**
+1. Go to https://nodejs.org/
+2. Download "LTS" version (e.g., 20.x.x)
+3. Run installer, accept defaults
+4. Verify in PowerShell:
+   ```powershell
+   node --version   # Should show v20.x.x
+   npm --version    # Should show 10.x.x
    ```
 
-2. **Node.js** (LTS version)
-   ```powershell
-   winget install OpenJS.NodeJS.LTS
+**Option B - Via winget:**
+```powershell
+winget install OpenJS.NodeJS.LTS
+# Restart PowerShell after install
+node --version
+npm --version
+```
 
-   # Verify
-   node --version
-   npm --version
+#### 2. Rust (with MSVC toolchain)
+
+1. Go to https://rustup.rs/
+2. Download `rustup-init.exe`
+3. Run it, select "1) Proceed with installation (default)"
+4. Restart PowerShell
+5. Verify:
+   ```powershell
+   rustc --version   # Should show rustc 1.x.x
+   cargo --version   # Should show cargo 1.x.x
    ```
 
-3. **Visual Studio Build Tools**
-   ```powershell
-   winget install Microsoft.VisualStudio.2022.BuildTools
-   ```
-   - Run installer, select "Desktop development with C++"
-   - This provides MSVC compiler and Windows SDK
+**Or via winget:**
+```powershell
+winget install Rustlang.Rustup
+# Restart PowerShell
+rustc --version
+cargo --version
+```
 
-4. **Git** (if not installed)
+#### 3. Visual Studio Build Tools (Required for Rust on Windows)
+
+1. Go to https://visualstudio.microsoft.com/visual-cpp-build-tools/
+2. Download "Build Tools for Visual Studio 2022"
+3. Run installer
+4. Select **"Desktop development with C++"** workload
+5. Click Install (downloads ~2GB)
+
+**Or via winget:**
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools
+# Then run Visual Studio Installer and add C++ workload
+```
+
+#### 4. Git
+```powershell
+winget install Git.Git
+# Restart PowerShell
+git --version
+```
+
+#### 5. Claude Code CLI
+
+**Option A - npm (after Node.js installed):**
+```powershell
+npm install -g @anthropic-ai/claude-code
+claude --version
+```
+
+**Option B - Direct download:**
+1. Go to https://claude.ai/download
+2. Download Windows installer
+3. Run installer
+4. Verify in PowerShell:
    ```powershell
-   winget install Git.Git
+   claude --version
    ```
+
+**First-time setup:**
+```powershell
+# Login to Claude (opens browser)
+claude login
+
+# Navigate to project and start
+cd C:\projects\voice-dict
+claude
+```
+
+#### 6. (Optional) Windows Terminal
+Better terminal experience:
+```powershell
+winget install Microsoft.WindowsTerminal
+```
 
 ### Get the Code
 
