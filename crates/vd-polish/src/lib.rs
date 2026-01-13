@@ -155,11 +155,13 @@ fn cleanup_text(text: &str) -> String {
     static SPACE_PUNCT: OnceLock<Regex> = OnceLock::new();
     static START_PUNCT: OnceLock<Regex> = OnceLock::new();
     static DOUBLE_PUNCT: OnceLock<Regex> = OnceLock::new();
+    static COMMA_END_PUNCT: OnceLock<Regex> = OnceLock::new();
 
     let multi_space = MULTI_SPACE.get_or_init(|| Regex::new(r"\s+").unwrap());
     let space_punct = SPACE_PUNCT.get_or_init(|| Regex::new(r"\s+([,.!?])").unwrap());
     let start_punct = START_PUNCT.get_or_init(|| Regex::new(r"^[,\s]+").unwrap());
     let double_punct = DOUBLE_PUNCT.get_or_init(|| Regex::new(r"([,.!?])\s*[,.]+").unwrap());
+    let comma_end_punct = COMMA_END_PUNCT.get_or_init(|| Regex::new(r",([.!?])").unwrap());
 
     let mut result = text.to_string();
 
@@ -175,8 +177,17 @@ fn cleanup_text(text: &str) -> String {
     // Remove duplicate punctuation
     result = double_punct.replace_all(&result, "$1").to_string();
 
+    // Remove comma before end punctuation (e.g., ",?" -> "?")
+    result = comma_end_punct.replace_all(&result, "$1").to_string();
+
     // Trim and capitalize first letter
     result = result.trim().to_string();
+
+    // Remove trailing comma
+    if result.ends_with(',') {
+        result.pop();
+        result = result.trim_end().to_string();
+    }
 
     if !result.is_empty() {
         let mut chars: Vec<char> = result.chars().collect();
