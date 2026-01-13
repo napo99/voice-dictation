@@ -11,10 +11,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
-use vd_audio::{AudioCapture, AudioCaptureConfig};
+use vd_audio::{AudioCapture, AudioCaptureConfig, resample_high_quality};
 use vd_core::{
     AudioBuffer, AudioChunk, VadConfig, VadEvent,
     VoiceDictError, WhisperModel, SAMPLE_RATE,
@@ -83,7 +83,7 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         let models_dir = vd_core::models_dir();
         Self {
-            whisper_model_path: models_dir.join(WhisperModel::Base.filename()),
+            whisper_model_path: models_dir.join(WhisperModel::Small.filename()),
             vad_model_path: models_dir.join(vd_core::SILERO_VAD_MODEL.path),
             vad_config: VadConfig::default(),
             use_llm_polish: false, // Start with regex-only for speed
@@ -103,6 +103,11 @@ enum PipelineCommand {
     Cancel,
     Shutdown,
 }
+
+const VAD_FRAME_SAMPLES: usize = 512;
+const AUDIO_GAP_TOLERANCE_MS: u64 = 5;
+const AUDIO_GAP_LOG_THRESHOLD_MS: u64 = 50;
+const AUDIO_RX_WARN_THRESHOLD: Duration = Duration::from_millis(500);
 
 // ============================================================================
 // Pipeline Implementation
@@ -233,14 +238,35 @@ fn run_pipeline_worker(
         emit(PipelineEvent::AudioLevel(level));
     };
 
-    // Audio buffer for accumulating speech
-    let mut audio_buffer = AudioBuffer::new(SAMPLE_RATE);
+    // Audio buffer for accumulating speech - will use native sample rate from device
+    // We'll resample ONCE before sending to Whisper
+    let mut audio_buffer = AudioBuffer::new(SAMPLE_RATE);  // Will be updated with native rate
+    let mut native_sample_rate: u32 = SAMPLE_RATE;  // Track actual device sample rate
+    let mut vad_frame_buffer: Vec<f32> = Vec::new();
+    let mut last_chunk_end_ms: Option<u64> = None;
+    let mut total_gap_samples: usize = 0;
+    let mut last_audio_rx_at = Instant::now();
 
-    // Channel for receiving audio from capture thread
-    let (audio_tx, audio_rx) = bounded::<AudioChunk>(1024);
+    // Channel for receiving audio from capture thread - unbounded to prevent dropping samples
+    let (audio_tx, audio_rx) = crossbeam_channel::unbounded::<AudioChunk>();
 
-    // Audio capture (initialized lazily)
+    // Audio capture - pre-initialize to avoid delay on first recording
     let mut audio_capture: Option<AudioCapture> = None;
+    {
+        let audio_config = AudioCaptureConfig {
+            device_name: config.input_device.clone(),
+            ..Default::default()
+        };
+        match AudioCapture::new(audio_config, audio_tx.clone()) {
+            Ok(capture) => {
+                info!("Audio capture pre-initialized (not started yet)");
+                audio_capture = Some(capture);
+            }
+            Err(e) => {
+                warn!("Failed to pre-initialize audio capture: {}", e);
+            }
+        }
+    }
 
     // VAD (initialized lazily - requires model)
     let mut vad: Option<VoiceActivityDetector> = None;
@@ -328,6 +354,11 @@ fn run_pipeline_worker(
                 set_state(PipelineState::Listening);
                 info!("State -> Listening");
                 audio_buffer.clear();
+                native_sample_rate = SAMPLE_RATE;  // Reset - will be set from first chunk
+                vad_frame_buffer.clear();
+                last_chunk_end_ms = None;
+                total_gap_samples = 0;
+                last_audio_rx_at = Instant::now();
                 *transcript.lock().unwrap() = String::new();
 
                 // Initialize components if needed
@@ -340,38 +371,9 @@ fn run_pipeline_worker(
                     continue;
                 }
 
-                // Start audio capture
-                info!("Initializing audio capture...");
-                if audio_capture.is_none() {
-                    let audio_config = AudioCaptureConfig {
-                        device_name: config.input_device.clone(),
-                        ..Default::default()
-                    };
-                    info!("Audio config: {:?}", audio_config);
-                    match AudioCapture::new(audio_config, audio_tx.clone()) {
-                        Ok(mut capture) => {
-                            info!("AudioCapture created successfully");
-                            if let Err(e) = capture.start() {
-                                emit(PipelineEvent::Error(format!(
-                                    "Failed to start audio: {}",
-                                    e
-                                )));
-                                set_state(PipelineState::Idle);
-                                continue;
-                            }
-                            info!("Audio capture STARTED");
-                            audio_capture = Some(capture);
-                        }
-                        Err(e) => {
-                            emit(PipelineEvent::Error(format!(
-                                "Failed to create audio capture: {}",
-                                e
-                            )));
-                            set_state(PipelineState::Idle);
-                            continue;
-                        }
-                    }
-                } else if let Some(ref mut capture) = audio_capture {
+                // Start audio capture (pre-initialized, just need to start)
+                info!("Starting audio capture...");
+                if let Some(ref mut capture) = audio_capture {
                     if let Err(e) = capture.start() {
                         emit(PipelineEvent::Error(format!(
                             "Failed to start audio: {}",
@@ -380,6 +382,11 @@ fn run_pipeline_worker(
                         set_state(PipelineState::Idle);
                         continue;
                     }
+                    info!("Audio capture STARTED");
+                } else {
+                    emit(PipelineEvent::Error("Audio capture not initialized".into()));
+                    set_state(PipelineState::Idle);
+                    continue;
                 }
 
                 // Reset VAD state
@@ -421,53 +428,128 @@ fn run_pipeline_worker(
                         Err(_) => {} // No command, continue processing
                     }
 
-                    // Process audio chunks
-                    while let Ok(chunk) = audio_rx.try_recv() {
-                        // Calculate audio level
-                        let level = calculate_audio_level(&chunk.samples);
-                        set_audio_level(level);
+                    let mut process_chunk = |chunk: AudioChunk| {
+                        last_audio_rx_at = Instant::now();
 
-                        // Run VAD
-                        if let Some(ref mut v) = vad {
-                            match v.process(&chunk.samples) {
-                                Ok(VadEvent::SpeechStart) => {
-                                    if !speech_detected {
-                                        info!("!!! SPEECH DETECTED - VAD triggered !!!");
-                                        speech_detected = true;
-                                        set_state(PipelineState::Recording);
-                                        info!("State -> Recording");
+                        if native_sample_rate != chunk.sample_rate {
+                            if audio_buffer.is_empty() {
+                                native_sample_rate = chunk.sample_rate;
+                                info!(
+                                    "Native sample rate detected: {}Hz (will resample to {}Hz for Whisper)",
+                                    native_sample_rate, SAMPLE_RATE
+                                );
+                                audio_buffer = AudioBuffer::new(native_sample_rate);
+                            } else {
+                                warn!(
+                                    "Sample rate changed mid-recording ({}Hz -> {}Hz); keeping original buffer",
+                                    native_sample_rate, chunk.sample_rate
+                                );
+                            }
+                        }
+
+                        let chunk_duration_ms =
+                            (chunk.samples.len() as f32 / chunk.sample_rate as f32 * 1000.0)
+                                .round() as u64;
+                        if let Some(last_end_ms) = last_chunk_end_ms {
+                            if chunk.timestamp_ms > last_end_ms + AUDIO_GAP_TOLERANCE_MS {
+                                let gap_ms = chunk.timestamp_ms - last_end_ms;
+                                let gap_samples = ((gap_ms as f32 / 1000.0)
+                                    * native_sample_rate as f32)
+                                    .round() as usize;
+                                if gap_samples > 0 {
+                                    total_gap_samples += gap_samples;
+                                    audio_buffer.extend(&vec![0.0; gap_samples]);
+                                    if gap_ms >= AUDIO_GAP_LOG_THRESHOLD_MS {
+                                        warn!(
+                                            "Audio gap detected: {}ms ({} samples)",
+                                            gap_ms, gap_samples
+                                        );
+                                    } else {
+                                        debug!(
+                                            "Audio gap detected: {}ms ({} samples)",
+                                            gap_ms, gap_samples
+                                        );
                                     }
                                 }
-                                Ok(VadEvent::SpeechEnd) => {
-                                    // Speech ended, but we keep recording until hotkey released
-                                    debug!("VAD detected speech end");
-                                }
-                                Ok(VadEvent::SpeechContinue) => {
-                                    // Speech continues
-                                }
-                                Ok(VadEvent::Silence) => {
-                                    // Silence
-                                }
-                                Err(e) => {
-                                    warn!("VAD error: {}", e);
-                                }
-                            }
-                        } else {
-                            // No VAD, assume speech immediately
-                            if !speech_detected {
-                                speech_detected = true;
-                                set_state(PipelineState::Recording);
                             }
                         }
+                        last_chunk_end_ms = Some(chunk.timestamp_ms + chunk_duration_ms);
 
-                        // Accumulate audio if speech detected or no VAD
-                        if speech_detected || vad.is_none() {
-                            audio_buffer.extend(&chunk.samples);
+                        let level = calculate_audio_level(&chunk.samples);
+                        if level > 0.01 {
+                            debug!(
+                                "Audio level: {:.3}, samples: {}",
+                                level,
+                                chunk.samples.len()
+                            );
+                        }
+                        set_audio_level(level);
+
+                        audio_buffer.extend(&chunk.samples);
+
+                        if let Some(ref mut v) = vad {
+                            let vad_samples = if chunk.sample_rate != SAMPLE_RATE {
+                                resample_linear(&chunk.samples, chunk.sample_rate, SAMPLE_RATE)
+                            } else {
+                                chunk.samples.clone()
+                            };
+
+                            if !vad_samples.is_empty() {
+                                vad_frame_buffer.extend_from_slice(&vad_samples);
+                                let mut processed = 0;
+                                while vad_frame_buffer.len() - processed >= VAD_FRAME_SAMPLES {
+                                    let frame = &vad_frame_buffer
+                                        [processed..processed + VAD_FRAME_SAMPLES];
+                                    match v.process(frame) {
+                                        Ok(VadEvent::SpeechStart) => {
+                                            if !speech_detected {
+                                                info!("VAD detected speech");
+                                                speech_detected = true;
+                                                set_state(PipelineState::Recording);
+                                                info!("State -> Recording");
+                                            }
+                                        }
+                                        Ok(VadEvent::SpeechEnd) => {
+                                            debug!("VAD detected speech end");
+                                        }
+                                        Ok(VadEvent::SpeechContinue | VadEvent::Silence) => {}
+                                        Err(e) => {
+                                            warn!("VAD error: {}", e);
+                                        }
+                                    }
+                                    processed += VAD_FRAME_SAMPLES;
+                                }
+                                if processed > 0 {
+                                    vad_frame_buffer.drain(..processed);
+                                }
+                            }
+                        } else if !speech_detected {
+                            speech_detected = true;
+                            set_state(PipelineState::Recording);
+                        }
+                    };
+
+                    match audio_rx.recv_timeout(Duration::from_millis(20)) {
+                        Ok(chunk) => {
+                            process_chunk(chunk);
+                            while let Ok(chunk) = audio_rx.try_recv() {
+                                process_chunk(chunk);
+                            }
+                        }
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                            if last_audio_rx_at.elapsed() >= AUDIO_RX_WARN_THRESHOLD {
+                                warn!(
+                                    "No audio chunks received for {}ms",
+                                    last_audio_rx_at.elapsed().as_millis()
+                                );
+                                last_audio_rx_at = Instant::now();
+                            }
+                        }
+                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                            warn!("Audio channel disconnected");
+                            break 'recording;
                         }
                     }
-
-                    // Small sleep to avoid busy-waiting
-                    thread::sleep(std::time::Duration::from_millis(5));
 
                     // Timeout after 30 seconds
                     if start_time.elapsed().as_secs() > 30 {
@@ -479,6 +561,34 @@ fn run_pipeline_worker(
                 // Stop audio capture
                 if let Some(ref mut capture) = audio_capture {
                     capture.stop();
+                }
+
+                // Drain any remaining audio chunks from the channel
+                // (there may be chunks buffered that we haven't processed yet)
+                let mut drained_count = 0;
+                while let Ok(chunk) = audio_rx.try_recv() {
+                    audio_buffer.extend(&chunk.samples);
+                    drained_count += 1;
+                }
+                if drained_count > 0 {
+                    info!("Drained {} remaining audio chunks after stop", drained_count);
+                }
+
+                let recording_elapsed_ms = start_time.elapsed().as_millis() as u64;
+                if let Some(last_end_ms) = last_chunk_end_ms {
+                    if recording_elapsed_ms > last_end_ms + AUDIO_GAP_TOLERANCE_MS {
+                        let gap_ms = recording_elapsed_ms - last_end_ms;
+                        let gap_samples = ((gap_ms as f32 / 1000.0) * native_sample_rate as f32)
+                            .round() as usize;
+                        if gap_samples > 0 {
+                            total_gap_samples += gap_samples;
+                            audio_buffer.extend(&vec![0.0; gap_samples]);
+                            warn!(
+                                "End-of-recording gap: {}ms ({} samples)",
+                                gap_ms, gap_samples
+                            );
+                        }
+                    }
                 }
 
                 // Skip processing if cancelled
@@ -495,22 +605,60 @@ fn run_pipeline_worker(
 
                 set_state(PipelineState::Processing);
                 info!("State -> Processing");
-                info!("Audio buffer: {} samples ({:.2}s)",
+                let audio_duration_secs = audio_buffer.samples().len() as f32 / native_sample_rate as f32;
+                info!("Audio buffer: {} samples at {}Hz ({:.2}s)",
                     audio_buffer.samples().len(),
-                    audio_buffer.samples().len() as f32 / SAMPLE_RATE as f32
+                    native_sample_rate,
+                    audio_duration_secs
+                );
+                if total_gap_samples > 0 {
+                    let gap_secs = total_gap_samples as f32 / native_sample_rate as f32;
+                    warn!(
+                        "Audio gaps inserted: {} samples ({:.2}s)",
+                        total_gap_samples, gap_secs
+                    );
+                }
+
+                // Create debug directory
+                let debug_dir = vd_core::models_dir().parent().unwrap().join("debug");
+                let _ = std::fs::create_dir_all(&debug_dir);
+
+                // Save audio to timestamped WAV file for debugging (at native sample rate)
+                let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+                let wav_filename = format!("recording_{}.wav", timestamp);
+                let debug_audio_path = debug_dir.join(&wav_filename);
+                if let Err(e) = save_audio_to_wav(&debug_audio_path, audio_buffer.samples(), native_sample_rate) {
+                    warn!("Failed to save debug audio: {}", e);
+                } else {
+                    info!("Debug audio saved to: {:?} ({}Hz)", debug_audio_path, native_sample_rate);
+                }
+
+                // RESAMPLE to 16kHz for Whisper using HIGH-QUALITY algorithm
+                // This is the KEY fix - resample ONCE with proper sinc interpolation
+                let samples_for_whisper = if native_sample_rate != SAMPLE_RATE {
+                    info!(">>> Resampling from {}Hz to {}Hz for Whisper...", native_sample_rate, SAMPLE_RATE);
+                    resample_high_quality(audio_buffer.samples(), native_sample_rate, SAMPLE_RATE)
+                } else {
+                    audio_buffer.samples().to_vec()
+                };
+                info!("Samples for Whisper: {} ({:.2}s at {}Hz)",
+                    samples_for_whisper.len(),
+                    samples_for_whisper.len() as f32 / SAMPLE_RATE as f32,
+                    SAMPLE_RATE
                 );
 
                 // Transcribe
                 info!(">>> Starting Whisper transcription...");
-                let transcribed_text = if let Some(ref w) = whisper {
-                    match w.transcribe(audio_buffer.samples()) {
+                let transcription_result = if let Some(ref w) = whisper {
+                    match w.transcribe(&samples_for_whisper) {
                         Ok(result) => {
                             info!(
-                                "Transcribed {} chars in {}ms",
+                                "Transcribed {} chars in {}ms (confidence: {:.2})",
                                 result.text.len(),
-                                result.processing_time_ms
+                                result.processing_time_ms,
+                                result.confidence
                             );
-                            result.text
+                            Some(result)
                         }
                         Err(e) => {
                             emit(PipelineEvent::Error(format!("Transcription failed: {}", e)));
@@ -523,6 +671,36 @@ fn run_pipeline_worker(
                     set_state(PipelineState::Idle);
                     continue;
                 };
+
+                let result = transcription_result.unwrap();
+                let transcribed_text = result.text.clone();
+
+                // Save transcription to log file
+                let log_path = debug_dir.join("transcriptions.log");
+                let gap_secs = if total_gap_samples > 0 {
+                    total_gap_samples as f32 / native_sample_rate as f32
+                } else {
+                    0.0
+                };
+                let log_entry = format!(
+                    "[{}] audio={:.2}s gap={:.2}s proc={}ms conf={:.2} wav={} text=\"{}\"\n",
+                    timestamp,
+                    audio_duration_secs,
+                    gap_secs,
+                    result.processing_time_ms,
+                    result.confidence,
+                    wav_filename,
+                    transcribed_text
+                );
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path)
+                {
+                    use std::io::Write;
+                    let _ = file.write_all(log_entry.as_bytes());
+                    info!("Transcription logged to: {:?}", log_path);
+                }
 
                 if transcribed_text.is_empty() {
                     info!("Empty transcription");
@@ -548,8 +726,8 @@ fn run_pipeline_worker(
                 info!(">>> Injecting text: \"{}\"", polished_text);
 
                 if let Some(ref mut inj) = injector {
-                    // Small delay before injection to allow user to release hotkey
-                    thread::sleep(std::time::Duration::from_millis(50));
+                    // Minimal delay - clipboard paste is fast
+                    thread::sleep(std::time::Duration::from_millis(10));
 
                     match inj.inject(&polished_text) {
                         Ok(()) => {
@@ -602,6 +780,32 @@ fn run_pipeline_worker(
     Ok(())
 }
 
+/// Linear resampling for VAD input (fast, low overhead).
+fn resample_linear(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || samples.is_empty() {
+        return samples.to_vec();
+    }
+
+    let ratio = to_rate as f64 / from_rate as f64;
+    let new_len = (samples.len() as f64 * ratio).ceil() as usize;
+    let mut result = Vec::with_capacity(new_len);
+
+    for i in 0..new_len {
+        let src_idx = i as f64 / ratio;
+        let src_idx_floor = src_idx.floor() as usize;
+        let src_idx_ceil = (src_idx_floor + 1).min(samples.len().saturating_sub(1));
+        let frac = src_idx - src_idx_floor as f64;
+
+        if src_idx_floor < samples.len() {
+            let sample = samples[src_idx_floor] * (1.0 - frac as f32)
+                + samples.get(src_idx_ceil).copied().unwrap_or(0.0) * frac as f32;
+            result.push(sample);
+        }
+    }
+
+    result
+}
+
 /// Calculate RMS audio level (0.0 - 1.0)
 fn calculate_audio_level(samples: &[f32]) -> f32 {
     if samples.is_empty() {
@@ -613,6 +817,46 @@ fn calculate_audio_level(samples: &[f32]) -> f32 {
 
     // Normalize to 0-1 range (assuming typical speech peaks around 0.3-0.5)
     (rms * 3.0).min(1.0)
+}
+
+/// Save audio samples to a WAV file for debugging
+fn save_audio_to_wav(path: &std::path::Path, samples: &[f32], sample_rate: u32) -> Result<(), String> {
+    use std::io::Write;
+
+    let num_samples = samples.len() as u32;
+    let byte_rate = sample_rate * 2; // 16-bit mono
+    let data_size = num_samples * 2;
+    let file_size = 36 + data_size;
+
+    let mut file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+
+    // RIFF header
+    file.write_all(b"RIFF").map_err(|e| e.to_string())?;
+    file.write_all(&file_size.to_le_bytes()).map_err(|e| e.to_string())?;
+    file.write_all(b"WAVE").map_err(|e| e.to_string())?;
+
+    // fmt chunk
+    file.write_all(b"fmt ").map_err(|e| e.to_string())?;
+    file.write_all(&16u32.to_le_bytes()).map_err(|e| e.to_string())?; // chunk size
+    file.write_all(&1u16.to_le_bytes()).map_err(|e| e.to_string())?;  // PCM format
+    file.write_all(&1u16.to_le_bytes()).map_err(|e| e.to_string())?;  // mono
+    file.write_all(&sample_rate.to_le_bytes()).map_err(|e| e.to_string())?;
+    file.write_all(&byte_rate.to_le_bytes()).map_err(|e| e.to_string())?;
+    file.write_all(&2u16.to_le_bytes()).map_err(|e| e.to_string())?;  // block align
+    file.write_all(&16u16.to_le_bytes()).map_err(|e| e.to_string())?; // bits per sample
+
+    // data chunk
+    file.write_all(b"data").map_err(|e| e.to_string())?;
+    file.write_all(&data_size.to_le_bytes()).map_err(|e| e.to_string())?;
+
+    // Convert f32 samples to i16 and write
+    for &sample in samples {
+        let clamped = sample.clamp(-1.0, 1.0);
+        let i16_sample = (clamped * 32767.0) as i16;
+        file.write_all(&i16_sample.to_le_bytes()).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 // ============================================================================

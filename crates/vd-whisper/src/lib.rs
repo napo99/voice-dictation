@@ -59,7 +59,19 @@ impl WhisperTranscriber {
 
         info!("Loading Whisper model from: {}", model_path.display());
 
-        let params = WhisperContextParameters::default();
+        let mut params = WhisperContextParameters::default();
+        let want_gpu = std::env::var("VD_WHISPER_GPU")
+            .map(|value| value != "0")
+            .unwrap_or(true);
+        params.use_gpu(want_gpu);
+        let gpu_available = unsafe { whisper_rs::whisper_rs_sys::ggml_cpu_has_gpublas() } != 0;
+        if want_gpu && !gpu_available {
+            warn!("Whisper GPU requested but ggml reports no GPU BLAS support");
+        }
+        info!(
+            "Whisper GPU: requested={} available={}",
+            want_gpu, gpu_available
+        );
         let ctx = WhisperContext::new_with_params(
             model_path.to_str().ok_or_else(|| {
                 TranscriptionError::ModelLoadError("Invalid model path encoding".to_string())
@@ -99,16 +111,21 @@ impl WhisperTranscriber {
 
         let start = Instant::now();
 
+        // Preprocess audio: remove DC offset and normalize
+        let processed_samples = normalize_audio(&remove_dc_offset(samples));
+        let samples = &processed_samples;
+        info!("Audio preprocessed: DC offset removed, normalized");
+
         // Create transcription state
         let mut state = self
             .ctx
             .create_state()
             .map_err(|e| TranscriptionError::InferenceError(e.to_string()))?;
 
-        // Configure transcription parameters
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        // Configure transcription parameters - Greedy with higher best_of for accuracy
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
 
-        // Optimize for speed and English
+        // Optimize for English
         params.set_language(Some("en"));
         params.set_translate(false);
         params.set_print_special(false);
@@ -116,12 +133,23 @@ impl WhisperTranscriber {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_token_timestamps(false);
-        params.set_single_segment(true);
-        params.set_no_context(true);
+
+        // CRITICAL: Allow multiple segments for longer audio
+        params.set_single_segment(false);
+
+        // Keep context between segments for coherent transcription
+        params.set_no_context(false);
 
         // Suppress non-speech tokens
         params.set_suppress_blank(true);
         params.set_suppress_non_speech_tokens(true);
+
+        // No truncation limits - these were causing cutoff
+        params.set_max_tokens(0);  // 0 = no token limit per segment
+        params.set_max_len(0);     // 0 = no character limit per segment
+
+        // Increase max text context for longer audio
+        params.set_n_max_text_ctx(16384);
 
         // Run transcription
         state
@@ -133,12 +161,17 @@ impl WhisperTranscriber {
             TranscriptionError::InferenceError(format!("Failed to get segments: {}", e))
         })?;
 
+        info!("Whisper found {} segments", num_segments);
+
         let mut text = String::new();
         let mut total_prob = 0.0f32;
         let mut prob_count = 0;
 
         for i in 0..num_segments {
             if let Ok(segment_text) = state.full_get_segment_text(i) {
+                let n_tokens = state.full_n_tokens(i).unwrap_or(0);
+                info!("  Segment {}: {} chars, {} tokens: \"{}\"",
+                    i, segment_text.len(), n_tokens, segment_text.trim());
                 text.push_str(&segment_text);
             }
 
@@ -151,6 +184,8 @@ impl WhisperTranscriber {
                 }
             }
         }
+
+        info!("Total transcription: {} chars, {} tokens", text.len(), prob_count);
 
         let processing_time_ms = start.elapsed().as_millis() as u64;
         let audio_duration_ms = (duration_secs * 1000.0) as u64;

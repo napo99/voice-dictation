@@ -55,7 +55,7 @@ impl Default for AudioCaptureConfig {
         Self {
             sample_rate: SAMPLE_RATE,
             channels: CHANNELS,
-            buffer_size: 480, // 30ms at 16kHz
+            buffer_size: 512, // 32ms at 16kHz (aligns with VAD chunking)
             device_name: None,
         }
     }
@@ -199,8 +199,17 @@ fn run_capture_loop(
             .find(|d| d.name().map_or(false, |n| &n == name))
             .ok_or_else(|| AudioError::NoInputDevice)?
     } else {
-        host.default_input_device()
-            .ok_or(AudioError::NoInputDevice)?
+        // Try default device first, fall back to first available device
+        match host.default_input_device() {
+            Some(device) => device,
+            None => {
+                warn!("No default input device, trying first available device...");
+                host.input_devices()
+                    .map_err(|e| AudioError::ConfigError(e.to_string()))?
+                    .next()
+                    .ok_or(AudioError::NoInputDevice)?
+            }
+        }
     };
 
     let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
@@ -223,7 +232,12 @@ fn run_capture_loop(
     let sample_rate = stream_config.sample_rate.0;
     let channels = stream_config.channels as usize;
     let target_channels = config.channels as usize;
-    let target_sample_rate = config.sample_rate;
+
+    // LOG THE ACTUAL SAMPLE RATES - critical for debugging resampling
+    info!(
+        "Audio device: {}Hz {}ch -> will send at native rate (resample later)",
+        sample_rate, channels
+    );
 
     // Create the stream
     let running_cb = running.clone();
@@ -237,7 +251,7 @@ fn run_capture_loop(
 
                 let timestamp_ms = start_time.elapsed().as_millis() as u64;
 
-                // Convert to mono if needed
+                // Convert to mono if needed (but DON'T resample - send at native rate)
                 let mono_samples: Vec<f32> = if channels > target_channels {
                     // Average channels to mono
                     data.chunks(channels)
@@ -247,21 +261,18 @@ fn run_capture_loop(
                     data.to_vec()
                 };
 
-                // Resample if needed
-                let samples = if sample_rate != target_sample_rate {
-                    resample(&mono_samples, sample_rate, target_sample_rate)
-                } else {
-                    mono_samples
-                };
-
+                // NO RESAMPLING HERE - send at native sample rate
+                // Resampling will happen ONCE before Whisper with high-quality algorithm
                 let chunk = AudioChunk {
-                    samples,
+                    samples: mono_samples,
+                    sample_rate,  // Include actual sample rate so receiver knows
                     timestamp_ms,
                 };
 
-                // Non-blocking send - if the receiver is full, we drop the oldest samples
-                if sender.try_send(chunk).is_err() {
-                    warn!("Audio buffer full, dropping samples");
+                // BLOCKING send - never drop audio
+                // With unbounded channel, this won't block, but ensures delivery
+                if let Err(e) = sender.send(chunk) {
+                    error!("Failed to send audio chunk: {}", e);
                 }
             },
             move |err| {
@@ -290,19 +301,39 @@ fn find_best_config(
     mut supported: cpal::SupportedInputConfigs,
     config: &AudioCaptureConfig,
 ) -> Result<cpal::StreamConfig, AudioError> {
-    // Try to find exact match first
     let target_rate = cpal::SampleRate(config.sample_rate);
+    let target_channels = config.channels;
+    let mut fallback_config: Option<cpal::SupportedStreamConfig> = None;
 
-    // Look for a config that supports our target sample rate
     for supported_config in supported.by_ref() {
         if supported_config.min_sample_rate() <= target_rate
             && supported_config.max_sample_rate() >= target_rate
         {
-            return Ok(supported_config.with_sample_rate(target_rate).into());
+            if supported_config.channels() == target_channels {
+                let mut stream_config: cpal::StreamConfig =
+                    supported_config.with_sample_rate(target_rate).into();
+                stream_config.buffer_size = cpal::BufferSize::Fixed(config.buffer_size as u32);
+                return Ok(stream_config);
+            }
+
+            if fallback_config.is_none() {
+                fallback_config = Some(supported_config.with_sample_rate(target_rate));
+            }
         }
     }
 
-    // Fall back to default config
+    if let Some(supported_config) = fallback_config {
+        warn!(
+            "No exact channel match for {}ch at {}Hz, using {}ch",
+            target_channels,
+            target_rate.0,
+            supported_config.channels()
+        );
+        let mut stream_config: cpal::StreamConfig = supported_config.into();
+        stream_config.buffer_size = cpal::BufferSize::Fixed(config.buffer_size as u32);
+        return Ok(stream_config);
+    }
+
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -310,32 +341,102 @@ fn find_best_config(
 
     device
         .default_input_config()
-        .map(|c| c.into())
+        .map(|c| {
+            let mut stream_config: cpal::StreamConfig = c.into();
+            stream_config.buffer_size = cpal::BufferSize::Fixed(config.buffer_size as u32);
+            stream_config
+        })
         .map_err(|e| AudioError::ConfigError(e.to_string()))
 }
 
-/// Simple linear resampling
+/// High-quality resampling using rubato (sinc interpolation)
 ///
-/// This is a basic implementation. For production, consider using a
-/// proper resampling library like `rubato` for better quality.
-fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-    if from_rate == to_rate {
+/// This provides much better quality than linear interpolation,
+/// especially for downsampling (e.g., 48kHz → 16kHz).
+pub fn resample_high_quality(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    use rubato::{FftFixedInOut, Resampler};
+
+    if from_rate == to_rate || samples.is_empty() {
+        return samples.to_vec();
+    }
+
+    info!(
+        "Resampling {} samples from {}Hz to {}Hz (high-quality sinc)",
+        samples.len(),
+        from_rate,
+        to_rate
+    );
+
+    // Create resampler - use FFT-based for best quality
+    // chunk_size should be power of 2 for FFT efficiency
+    let chunk_size = 1024;
+
+    let mut resampler = match FftFixedInOut::<f32>::new(
+        from_rate as usize,
+        to_rate as usize,
+        chunk_size,
+        1, // mono
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Failed to create resampler: {}, falling back to simple", e);
+            return simple_resample(samples, from_rate, to_rate);
+        }
+    };
+
+    let input_frames_needed = resampler.input_frames_next();
+    let mut output = Vec::new();
+
+    // Process in chunks
+    let mut pos = 0;
+    while pos + input_frames_needed <= samples.len() {
+        let input_chunk: Vec<Vec<f32>> = vec![samples[pos..pos + input_frames_needed].to_vec()];
+
+        match resampler.process(&input_chunk, None) {
+            Ok(output_chunk) => {
+                if !output_chunk.is_empty() && !output_chunk[0].is_empty() {
+                    output.extend_from_slice(&output_chunk[0]);
+                }
+            }
+            Err(e) => {
+                warn!("Resampling error: {}", e);
+            }
+        }
+        pos += input_frames_needed;
+    }
+
+    // Handle remaining samples with simple resampling (usually just a small tail)
+    if pos < samples.len() {
+        let remaining = &samples[pos..];
+        let resampled_tail = simple_resample(remaining, from_rate, to_rate);
+        output.extend_from_slice(&resampled_tail);
+    }
+
+    info!("Resampled to {} samples", output.len());
+    output
+}
+
+/// Simple linear resampling (fallback for small chunks)
+fn simple_resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || samples.is_empty() {
         return samples.to_vec();
     }
 
     let ratio = to_rate as f64 / from_rate as f64;
-    let new_len = (samples.len() as f64 * ratio) as usize;
+    let new_len = (samples.len() as f64 * ratio).ceil() as usize;
     let mut result = Vec::with_capacity(new_len);
 
     for i in 0..new_len {
         let src_idx = i as f64 / ratio;
         let src_idx_floor = src_idx.floor() as usize;
-        let src_idx_ceil = (src_idx_floor + 1).min(samples.len() - 1);
+        let src_idx_ceil = (src_idx_floor + 1).min(samples.len().saturating_sub(1));
         let frac = src_idx - src_idx_floor as f64;
 
-        let sample = samples[src_idx_floor] * (1.0 - frac as f32)
-            + samples[src_idx_ceil] * frac as f32;
-        result.push(sample);
+        if src_idx_floor < samples.len() {
+            let sample = samples[src_idx_floor] * (1.0 - frac as f32)
+                + samples.get(src_idx_ceil).copied().unwrap_or(0.0) * frac as f32;
+            result.push(sample);
+        }
     }
 
     result
@@ -453,20 +554,20 @@ mod tests {
     #[test]
     fn test_resample_same_rate() {
         let samples = vec![1.0, 2.0, 3.0, 4.0];
-        let result = resample(&samples, 16000, 16000);
+        let result = resample_high_quality(&samples, 16000, 16000);
         assert_eq!(result, samples);
     }
 
     #[test]
-    fn test_resample_upsample() {
-        let samples = vec![0.0, 1.0];
-        let result = resample(&samples, 8000, 16000);
-        assert_eq!(result.len(), 4);
-        // Should interpolate between values
-        assert!((result[0] - 0.0).abs() < 0.01);
-        // Middle values should be between 0 and 1
-        assert!(result[1] >= 0.0 && result[1] <= 1.0);
-        assert!(result[2] >= 0.0 && result[2] <= 1.0);
+    fn test_resample_downsampling() {
+        // Test downsampling from 48kHz to 16kHz (common AirPods scenario)
+        // Create a simple sine wave at 48kHz
+        let samples: Vec<f32> = (0..4800)  // 100ms at 48kHz
+            .map(|i| (i as f32 * 2.0 * std::f32::consts::PI * 440.0 / 48000.0).sin())
+            .collect();
+        let result = resample_high_quality(&samples, 48000, 16000);
+        // Should have roughly 1/3 the samples (100ms at 16kHz = 1600 samples)
+        assert!(result.len() >= 1500 && result.len() <= 1700);
     }
 
     #[test]

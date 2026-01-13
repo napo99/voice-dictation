@@ -24,13 +24,15 @@ vd-engine = { path = "crates/vd-engine" }
 
 # Audio
 cpal = "0.15"
+rubato = "0.15"  # High-quality resampling
 
 # VAD (Voice Activity Detection)
 ort = "2.0.0-rc.9"
 ndarray = "0.16"
 
 # Whisper transcription
-whisper-rs = "0.11"
+# Note: CUDA requires CUDA Toolkit installed. Enable with: features = ["cuda"]
+whisper-rs = { version = "0.11", features = ["cuda", "raw-api"] }
 
 # LLM (Candle for Phi-3)
 candle-core = "0.8"
