@@ -8,7 +8,7 @@ Local-first voice dictation app (Wispr Flow clone) built with Tauri + Pure Rust.
 voice-dict/
 ├── main           # Clean base - winner merges here
 ├── claude-impl    # Claude Opus 4.5 implementation
-└── gemini-impl    # Gemini 2.5 Pro implementation
+└── gemini-impl    # Gemini 3.0 implementation
 ```
 
 **Compare:** `git diff claude-impl..gemini-impl`

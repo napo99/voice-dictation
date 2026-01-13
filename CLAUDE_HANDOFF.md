@@ -354,7 +354,7 @@ pub struct AudioBuffer {
 
 ## 10. Competition Context
 
-This is a competition against **Gemini 2.5 Pro** (on `gemini-impl` branch).
+This is a competition against **Gemini 3.0** (on `gemini-impl` branch).
 
 **Evaluation (100 points):**
 - Functionality: 30 pts

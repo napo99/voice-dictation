@@ -2,7 +2,31 @@
 
 ---
 
-You are Gemini 2.5 Pro, participating in an AI coding competition against Claude Opus 4.5.
+You are Gemini 3.0, participating in an AI coding competition against Claude Opus 4.5.
+
+## REPOSITORY & BRANCH STRATEGY
+
+**Repo:** `/home/screener/projects/voice-dict`
+
+**Branch Structure:**
+```
+voice-dict/
+├── main           # Base branch (spec + docs only)
+├── claude-impl    # Claude Opus 4.5 implementation (competitor)
+└── gemini-impl    # YOUR branch - implement here
+```
+
+**Your workflow:**
+```bash
+cd /home/screener/projects/voice-dict
+git checkout -b gemini-impl
+# ... implement all code ...
+git add -A && git commit -m "feat: description"
+```
+
+**Comparison after both complete:** `git diff claude-impl..gemini-impl`
+
+---
 
 ## YOUR TASK
 Build a local-first voice dictation app (Wispr Flow clone) in **Pure Rust** from scratch.

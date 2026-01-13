@@ -6,7 +6,7 @@ Local-first voice dictation app (Wispr Flow clone) built with Tauri + Pure Rust.
 
 This project is being built as a competition between:
 - **Claude Opus 4.5** → `claude-impl` branch
-- **Gemini 2.5 Pro** → `gemini-impl` branch
+- **Gemini 3.0** → `gemini-impl` branch
 
 Winner merges to `main`.
 
