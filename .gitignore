@@ -1,0 +1,29 @@
+# Build artifacts
+/target/
+**/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node modules (for Tauri frontend)
+node_modules/
+apps/desktop/node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Models (downloaded at runtime)
+models/
+
+# Logs
+*.log

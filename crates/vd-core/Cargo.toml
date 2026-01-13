@@ -1,0 +1,12 @@
+[package]
+name = "vd-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core types, traits, and errors for Voice-Dict"
+
+[dependencies]
+thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+dirs.workspace = true

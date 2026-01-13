@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Voice-Dict Contributors"]
+repository = "https://github.com/voice-dict/voice-dict"
+
+[workspace.dependencies]
+# Internal crates
+vd-core = { path = "crates/vd-core" }
+vd-audio = { path = "crates/vd-audio" }
+vd-vad = { path = "crates/vd-vad" }
+vd-whisper = { path = "crates/vd-whisper" }
+vd-polish = { path = "crates/vd-polish" }
+vd-inject = { path = "crates/vd-inject" }
+vd-engine = { path = "crates/vd-engine" }
+
+# Audio
+cpal = "0.15"
+
+# VAD (Voice Activity Detection)
+ort = "2.0.0-rc.9"
+ndarray = "0.16"
+
+# Whisper transcription
+whisper-rs = "0.11"
+
+# LLM (Candle for Phi-3)
+candle-core = "0.8"
+candle-nn = "0.8"
+candle-transformers = "0.8"
+hf-hub = "0.3"
+tokenizers = "0.20"
+
+# Key injection
+enigo = "0.2"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+crossbeam-channel = "0.5"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Utils
+dirs = "5"
+regex = "1"
+reqwest = { version = "0.12", features = ["blocking", "stream"] }
+indicatif = "0.17"

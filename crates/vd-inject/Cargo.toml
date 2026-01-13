@@ -1,0 +1,12 @@
+[package]
+name = "vd-inject"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Text injection for Voice-Dict using enigo"
+
+[dependencies]
+vd-core.workspace = true
+enigo.workspace = true
+tracing.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "vd-polish"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Text polishing for Voice-Dict (regex + LLM)"
+
+[dependencies]
+vd-core.workspace = true
+regex.workspace = true
+candle-core.workspace = true
+candle-nn.workspace = true
+candle-transformers.workspace = true
+hf-hub.workspace = true
+tokenizers.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
