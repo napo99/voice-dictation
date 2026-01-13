@@ -17,6 +17,9 @@ Thumbs.db
 node_modules/
 apps/desktop/node_modules/
 
+# Tauri generated files
+apps/desktop/src-tauri/gen/
+
 # Environment files
 .env
 .env.local

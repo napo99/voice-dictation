@@ -31,7 +31,10 @@
 //! ```
 
 use ndarray::{Array1, Array2, Array3};
-use ort::{GraphOptimizationLevel, Session, Value};
+use ort::{
+    session::{builder::GraphOptimizationLevel, Session},
+    value::Value,
+};
 use std::path::Path;
 use tracing::{debug, info, trace};
 use vd_core::{VadConfig, VadError, VadEvent, SAMPLE_RATE};
@@ -150,9 +153,11 @@ impl VoiceActivityDetector {
         let c_value = Value::from_array(c).map_err(|e| VadError::OnnxError(e.to_string()))?;
 
         // Run inference
+        let inputs = ort::inputs![input_value, sr_value, h_value, c_value]
+            .map_err(|e| VadError::OnnxError(e.to_string()))?;
         let outputs = self
             .session
-            .run(ort::inputs![input_value, sr_value, h_value, c_value])
+            .run(inputs)
             .map_err(|e| VadError::OnnxError(e.to_string()))?;
 
         // Extract outputs
