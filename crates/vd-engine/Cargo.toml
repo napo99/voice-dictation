@@ -7,12 +7,14 @@ description = "Orchestration engine for Voice-Dict"
 
 [dependencies]
 vd-core.workspace = true
-vd-audio.workspace = true
-vd-vad.workspace = true
-vd-whisper.workspace = true
-vd-polish.workspace = true
-vd-inject.workspace = true
 crossbeam-channel.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+
+# These will be used when full integration is complete
+# vd-audio.workspace = true
+# vd-vad.workspace = true
+# vd-whisper.workspace = true
+# vd-polish.workspace = true
+# vd-inject.workspace = true
+# tokio.workspace = true
