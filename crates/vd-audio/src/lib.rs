@@ -34,7 +34,7 @@ use crossbeam_channel::Sender;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use vd_core::{AudioChunk, AudioError, CHANNELS, SAMPLE_RATE};
 
 /// Configuration for audio capture
@@ -226,11 +226,12 @@ fn run_capture_loop(
     let target_sample_rate = config.sample_rate;
 
     // Create the stream
+    let running_cb = running.clone();
     let stream = device
         .build_input_stream(
             &stream_config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                if !running.load(Ordering::SeqCst) {
+                if !running_cb.load(Ordering::SeqCst) {
                     return;
                 }
 

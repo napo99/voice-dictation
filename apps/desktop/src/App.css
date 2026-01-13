@@ -1,268 +1,256 @@
-/* Voice-Dict Desktop App Styles */
+/* Voice-Dict Floating Pill Styles */
 
 :root {
-  --bg-primary: #1a1a2e;
-  --bg-secondary: #16213e;
-  --text-primary: #eee;
-  --text-secondary: #888;
-  --accent: #e94560;
-  --accent-hover: #ff6b6b;
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --error: #ef4444;
+  --pill-bg: rgba(26, 26, 46, 0.95);
+  --pill-border: rgba(255, 255, 255, 0.1);
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  --accent-idle: #6b7280;
+  --accent-listening: #fbbf24;
+  --accent-recording: #ef4444;
+  --accent-processing: #3b82f6;
+  --accent-success: #10b981;
+  --accent-error: #ef4444;
 }
 
-.container {
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* ============================================================================
+   Pill Container
+   ============================================================================ */
+
+.pill {
   display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  padding: 24px;
+  align-items: center;
+  gap: 12px;
+
+  height: 48px;
+  padding: 0 16px;
+
+  background: var(--pill-bg);
+  border: 1px solid var(--pill-border);
+  border-radius: 24px;
+
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+
+  cursor: grab;
+  user-select: none;
+
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
-header {
-  text-align: center;
-  margin-bottom: 32px;
+.pill:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
 }
 
-header h1 {
-  font-size: 28px;
-  font-weight: 600;
-  margin-bottom: 4px;
+.pill.dragging {
+  cursor: grabbing;
+  transform: scale(1.02);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
 }
 
-header .subtitle {
-  color: var(--text-secondary);
-  font-size: 14px;
-}
+/* ============================================================================
+   Status Icon
+   ============================================================================ */
 
-main {
-  flex: 1;
+.status-icon {
+  position: relative;
+  width: 20px;
+  height: 20px;
   display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-/* Status Section */
-.status-section {
-  display: flex;
+  align-items: center;
   justify-content: center;
 }
 
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 24px;
-  background: var(--bg-secondary);
-  border-radius: 12px;
-  font-size: 18px;
-  font-weight: 500;
-}
-
-.status-dot {
-  width: 12px;
-  height: 12px;
+.status-icon .dot {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: var(--text-secondary);
+  background: var(--accent-idle);
+  transition: all 0.3s ease;
 }
 
-.status-indicator.idle .status-dot {
-  background: var(--text-secondary);
+.status-icon .audio-ring {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-recording);
+  transition: transform 0.1s ease, opacity 0.1s ease;
 }
 
-.status-indicator.listening .status-dot {
-  background: var(--warning);
-  animation: pulse 1s infinite;
+/* State-based dot colors */
+.pill.idle .dot {
+  background: var(--accent-idle);
 }
 
-.status-indicator.recording .status-dot {
-  background: var(--accent);
-  animation: pulse 0.5s infinite;
+.pill.listening .dot {
+  background: var(--accent-listening);
+  animation: pulse 1.5s ease-in-out infinite;
 }
 
-.status-indicator.processing .status-dot {
-  background: var(--accent);
+.pill.recording .dot {
+  background: var(--accent-recording);
+  animation: pulse 0.8s ease-in-out infinite;
+}
+
+.pill.processing .dot {
+  background: var(--accent-processing);
   animation: spin 1s linear infinite;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+.pill.injecting .dot {
+  background: var(--accent-success);
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* Models Section */
-.models-section {
-  background: var(--bg-secondary);
-  border-radius: 12px;
-  padding: 20px;
-}
-
-.models-section h2 {
-  font-size: 16px;
-  margin-bottom: 12px;
-}
-
-.models-info {
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-bottom: 16px;
-}
-
-.models-info code {
-  display: block;
-  margin-top: 8px;
-  padding: 8px;
-  background: var(--bg-primary);
-  border-radius: 6px;
-  font-size: 12px;
-  word-break: break-all;
-}
-
-.models-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.models-list li {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  background: var(--bg-primary);
-  border-radius: 8px;
+.pill.error-state .dot,
+.status-icon.error {
+  background: var(--accent-error);
+  color: var(--accent-error);
+  font-weight: bold;
   font-size: 14px;
 }
 
-.models-list li.downloaded {
-  opacity: 0.7;
-}
+/* ============================================================================
+   Content
+   ============================================================================ */
 
-.model-name {
+.content {
   flex: 1;
-}
-
-.model-size {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.model-status {
-  font-size: 16px;
-}
-
-.download-hint {
-  margin-top: 16px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
-/* Controls Section */
-.controls-section {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 16px;
+  justify-content: center;
 }
 
-button {
-  padding: 14px 32px;
-  font-size: 16px;
+.content .text {
+  font-size: 14px;
   font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.content .subtext {
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+/* ============================================================================
+   Buttons
+   ============================================================================ */
+
+.settings-button {
+  background: transparent;
   border: none;
-  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 16px;
+  padding: 4px 8px;
   cursor: pointer;
+  border-radius: 4px;
   transition: all 0.2s ease;
 }
 
-.record-button {
-  background: var(--accent);
-  color: white;
-}
-
-.record-button:hover {
-  background: var(--accent-hover);
-  transform: scale(1.02);
-}
-
-.stop-button {
-  background: var(--warning);
-  color: var(--bg-primary);
-}
-
-.stop-button:hover {
-  opacity: 0.9;
-}
-
-.cancel-button {
-  background: transparent;
-  color: var(--text-secondary);
-  border: 1px solid var(--text-secondary);
-  padding: 10px 24px;
-  font-size: 14px;
-}
-
-.cancel-button:hover {
-  border-color: var(--text-primary);
+.settings-button:hover {
+  background: rgba(255, 255, 255, 0.1);
   color: var(--text-primary);
 }
 
-.processing {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 24px;
-  background: var(--bg-secondary);
-  border-radius: 10px;
-}
-
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--text-secondary);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-/* Error Section */
-.error-section {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid var(--error);
-  border-radius: 10px;
-  padding: 16px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.error-section p {
-  flex: 1;
-  color: var(--error);
-  font-size: 14px;
-}
-
-.error-section button {
+.dismiss-button {
   background: transparent;
-  color: var(--error);
-  border: 1px solid var(--error);
-  padding: 6px 12px;
-  font-size: 12px;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 18px;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
 }
 
-/* Footer */
-footer {
-  text-align: center;
-  padding-top: 24px;
-  color: var(--text-secondary);
-  font-size: 12px;
+.dismiss-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+/* ============================================================================
+   Special States
+   ============================================================================ */
+
+.pill.models-missing {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.pill.error-state {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* ============================================================================
+   Animations
+   ============================================================================ */
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.9);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================================================
+   Recording Animation
+   ============================================================================ */
+
+.pill.recording::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 26px;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(239, 68, 68, 0.3),
+    transparent
+  );
+  animation: recording-glow 2s linear infinite;
+  z-index: -1;
+}
+
+@keyframes recording-glow {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
 }

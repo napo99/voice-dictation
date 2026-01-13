@@ -1,217 +1,258 @@
 //! Voice-Dict Desktop Application
 //!
-//! Tauri-based desktop app for voice dictation.
+//! A floating pill UI for voice dictation, inspired by Wispr Flow.
+//!
+//! Architecture:
+//! - Floating, draggable, always-on-top pill window
+//! - Global hotkey activation (no clicking)
+//! - Real-time transcription preview
+//! - Automatic text injection
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
-use tauri::{Manager, State};
-use tracing::{debug, error, info};
-use tracing_subscriber::EnvFilter;
-use vd_core::{AppConfig, EngineState, WhisperModel};
-use vd_engine::{Engine, EngineBuilder, EngineConfig};
+mod pipeline;
 
-/// Application state managed by Tauri
+use std::sync::{Arc, Mutex};
+use tauri::{
+    AppHandle, Emitter, Listener, Manager, State, WebviewWindow,
+    WebviewWindowBuilder, LogicalPosition, LogicalSize,
+};
+use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::EnvFilter;
+
+use pipeline::{Pipeline, PipelineConfig, PipelineEvent, PipelineState};
+
+// ============================================================================
+// Application State
+// ============================================================================
+
+/// Shared application state
 struct AppState {
-    engine: Mutex<Option<Engine>>,
-    config: Mutex<AppConfig>,
+    pipeline: Arc<Mutex<Option<Pipeline>>>,
+    window_position: Arc<Mutex<(f64, f64)>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
-            engine: Mutex::new(None),
-            config: Mutex::new(AppConfig::default()),
+            pipeline: Arc::new(Mutex::new(None)),
+            window_position: Arc::new(Mutex::new((100.0, 100.0))),
         }
     }
 }
 
-/// Status information for the frontend
+// ============================================================================
+// IPC Types
+// ============================================================================
+
+/// Status sent to frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StatusInfo {
+pub struct PillStatus {
     pub state: String,
+    pub transcript: String,
     pub is_recording: bool,
-    pub is_processing: bool,
-    pub models_available: bool,
+    pub audio_level: f32,
 }
 
-/// Get the current engine status
+/// Position update from frontend drag
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositionUpdate {
+    pub x: f64,
+    pub y: f64,
+}
+
+// ============================================================================
+// Tauri Commands
+// ============================================================================
+
+/// Get current pill status
 #[tauri::command]
-fn get_status(state: State<AppState>) -> StatusInfo {
-    let engine = state.engine.lock().unwrap();
+fn get_status(state: State<AppState>) -> PillStatus {
+    let pipeline = state.pipeline.lock().unwrap();
 
-    let (engine_state, models_available) = if let Some(ref e) = *engine {
-        (e.state(), vd_engine::check_models(e.config()).is_ok())
+    if let Some(ref p) = *pipeline {
+        let pstate = p.state();
+        PillStatus {
+            state: format!("{:?}", pstate),
+            transcript: p.current_transcript().unwrap_or_default(),
+            is_recording: matches!(pstate, PipelineState::Recording),
+            audio_level: p.audio_level(),
+        }
     } else {
-        (EngineState::Idle, false)
-    };
-
-    StatusInfo {
-        state: format!("{:?}", engine_state),
-        is_recording: matches!(engine_state, EngineState::Recording),
-        is_processing: matches!(engine_state, EngineState::Processing),
-        models_available,
+        PillStatus {
+            state: "Idle".to_string(),
+            transcript: String::new(),
+            is_recording: false,
+            audio_level: 0.0,
+        }
     }
 }
 
-/// Get the current configuration
+/// Start recording (called on hotkey press)
 #[tauri::command]
-fn get_config(state: State<AppState>) -> AppConfig {
-    state.config.lock().unwrap().clone()
-}
+async fn start_recording(state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    info!("Hotkey pressed - starting recording");
 
-/// Update the configuration
-#[tauri::command]
-fn set_config(state: State<AppState>, config: AppConfig) -> Result<(), String> {
-    *state.config.lock().unwrap() = config;
-    info!("Configuration updated");
+    let mut pipeline = state.pipeline.lock().unwrap();
+
+    if pipeline.is_none() {
+        // Initialize pipeline on first use
+        let config = PipelineConfig::default();
+        let app_clone = app.clone();
+
+        let event_callback = move |event: PipelineEvent| {
+            // Forward pipeline events to frontend
+            let _ = app_clone.emit("pipeline-event", event);
+        };
+
+        *pipeline = Some(Pipeline::new(config, Box::new(event_callback))
+            .map_err(|e| e.to_string())?);
+    }
+
+    if let Some(ref mut p) = *pipeline {
+        p.start_recording().map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
-/// Check if models are downloaded
+/// Stop recording (called on hotkey release)
 #[tauri::command]
-fn check_models_available() -> bool {
-    let config = EngineConfig::default();
-    vd_engine::check_models(&config).is_ok()
+async fn stop_recording(state: State<'_, AppState>) -> Result<(), String> {
+    info!("Hotkey released - stopping recording");
+
+    let mut pipeline = state.pipeline.lock().unwrap();
+
+    if let Some(ref mut p) = *pipeline {
+        p.stop_recording().map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
-/// Get model download information
+/// Cancel current operation
 #[tauri::command]
-fn get_model_info() -> Vec<ModelDownloadInfo> {
-    vec![
-        ModelDownloadInfo {
-            name: "Silero VAD".to_string(),
-            filename: vd_core::SILERO_VAD_MODEL.path.to_string(),
-            url: vd_core::SILERO_VAD_MODEL.url.to_string(),
-            size_bytes: vd_core::SILERO_VAD_MODEL.size_bytes,
-            downloaded: vd_core::models_dir()
-                .join(vd_core::SILERO_VAD_MODEL.path)
-                .exists(),
-        },
-        ModelDownloadInfo {
-            name: "Whisper Base".to_string(),
-            filename: WhisperModel::Base.filename().to_string(),
-            url: WhisperModel::Base.download_url().to_string(),
-            size_bytes: WhisperModel::Base.size_bytes(),
-            downloaded: vd_core::models_dir()
-                .join(WhisperModel::Base.filename())
-                .exists(),
-        },
-    ]
+fn cancel(state: State<AppState>) -> Result<(), String> {
+    let mut pipeline = state.pipeline.lock().unwrap();
+
+    if let Some(ref mut p) = *pipeline {
+        p.cancel();
+    }
+
+    Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelDownloadInfo {
-    pub name: String,
-    pub filename: String,
-    pub url: String,
-    pub size_bytes: u64,
-    pub downloaded: bool,
+/// Update window position (from drag)
+#[tauri::command]
+fn update_position(state: State<AppState>, pos: PositionUpdate) {
+    let mut position = state.window_position.lock().unwrap();
+    *position = (pos.x, pos.y);
+    debug!("Window position updated to ({}, {})", pos.x, pos.y);
 }
 
-/// Get models directory path
+/// Check if models are available
+#[tauri::command]
+fn check_models() -> bool {
+    let models_dir = vd_core::models_dir();
+    let vad_exists = models_dir.join(vd_core::SILERO_VAD_MODEL.path).exists();
+    let whisper_exists = models_dir.join(vd_core::WhisperModel::Base.filename()).exists();
+    vad_exists && whisper_exists
+}
+
+/// Get models directory
 #[tauri::command]
 fn get_models_dir() -> String {
     vd_core::models_dir().display().to_string()
 }
 
-/// Initialize the engine
-#[tauri::command]
-fn initialize_engine(state: State<AppState>) -> Result<(), String> {
-    let config = state.config.lock().unwrap().clone();
+// ============================================================================
+// Window Setup
+// ============================================================================
 
-    let engine = EngineBuilder::new()
-        .whisper_model(config.whisper_model)
-        .use_llm_polish(config.use_llm_polish)
-        .input_device(config.input_device.clone())
-        .hotkey(config.hotkey.clone())
-        .build()
-        .map_err(|e| e.to_string())?;
+/// Create the floating pill window
+fn create_pill_window(app: &AppHandle) -> Result<WebviewWindow, tauri::Error> {
+    let window = WebviewWindowBuilder::new(
+        app,
+        "pill",
+        tauri::WebviewUrl::App("index.html".into())
+    )
+    .title("Voice-Dict")
+    .inner_size(320.0, 52.0)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .resizable(false)
+    .skip_taskbar(true)
+    .center()
+    .build()?;
 
-    *state.engine.lock().unwrap() = Some(engine);
-    info!("Engine initialized");
-
-    Ok(())
+    Ok(window)
 }
 
-/// Start recording
-#[tauri::command]
-fn start_recording(state: State<AppState>) -> Result<(), String> {
-    let mut engine = state.engine.lock().unwrap();
-
-    if let Some(ref mut e) = *engine {
-        e.handle_event(vd_core::EngineEvent::HotkeyPressed)
-            .map_err(|e| e.to_string())?;
-        debug!("Recording started");
-        Ok(())
-    } else {
-        Err("Engine not initialized".to_string())
-    }
-}
-
-/// Stop recording
-#[tauri::command]
-fn stop_recording(state: State<AppState>) -> Result<(), String> {
-    let mut engine = state.engine.lock().unwrap();
-
-    if let Some(ref mut e) = *engine {
-        e.handle_event(vd_core::EngineEvent::HotkeyReleased)
-            .map_err(|e| e.to_string())?;
-        debug!("Recording stopped");
-        Ok(())
-    } else {
-        Err("Engine not initialized".to_string())
-    }
-}
-
-/// Cancel current operation
-#[tauri::command]
-fn cancel_operation(state: State<AppState>) -> Result<(), String> {
-    let mut engine = state.engine.lock().unwrap();
-
-    if let Some(ref mut e) = *engine {
-        e.handle_event(vd_core::EngineEvent::Cancel)
-            .map_err(|e| e.to_string())?;
-        debug!("Operation cancelled");
-        Ok(())
-    } else {
-        Err("Engine not initialized".to_string())
-    }
-}
+// ============================================================================
+// Main Entry Point
+// ============================================================================
 
 fn main() {
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,voice_dict=debug")),
         )
         .init();
 
-    info!("Starting Voice-Dict desktop application");
+    info!("Starting Voice-Dict");
 
     // Ensure models directory exists
     let models_dir = vd_core::models_dir();
-    if !models_dir.exists() {
-        if let Err(e) = std::fs::create_dir_all(&models_dir) {
-            error!("Failed to create models directory: {}", e);
-        }
+    if let Err(e) = std::fs::create_dir_all(&models_dir) {
+        warn!("Failed to create models directory: {}", e);
     }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState::default())
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+
+            // Register global hotkey (Ctrl+Shift+Space)
+            use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+
+            let shortcut: Shortcut = "CommandOrControl+Shift+Space".parse().unwrap();
+
+            app.handle().plugin(
+                tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(move |_app, shortcut, event| {
+                        match event.state() {
+                            ShortcutState::Pressed => {
+                                info!("Global hotkey pressed");
+                                let _ = _app.emit("hotkey-pressed", ());
+                            }
+                            ShortcutState::Released => {
+                                info!("Global hotkey released");
+                                let _ = _app.emit("hotkey-released", ());
+                            }
+                        }
+                    })
+                    .build(),
+            )?;
+
+            app.global_shortcut().register(shortcut)?;
+            info!("Registered global shortcut: Ctrl+Shift+Space");
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_status,
-            get_config,
-            set_config,
-            check_models_available,
-            get_model_info,
-            get_models_dir,
-            initialize_engine,
             start_recording,
             stop_recording,
-            cancel_operation,
+            cancel,
+            update_position,
+            check_models,
+            get_models_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

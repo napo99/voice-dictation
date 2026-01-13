@@ -32,7 +32,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::thread::JoinHandle;
 use tracing::{debug, error, info, warn};
 use vd_core::{
     AppConfig, AudioBuffer, AudioChunk, EngineEvent, EngineState, TranscriptionResult,
@@ -77,12 +77,12 @@ pub struct Engine {
 
     // Channels for communication
     audio_tx: Option<Sender<AudioChunk>>,
-    audio_rx: Option<Receiver<AudioChunk>>,
+    _audio_rx: Option<Receiver<AudioChunk>>,
     event_tx: Sender<EngineEvent>,
     event_rx: Receiver<EngineEvent>,
 
     // Thread handles
-    inference_thread: Option<JoinHandle<()>>,
+    _inference_thread: Option<JoinHandle<()>>,
 
     // Audio buffer for accumulating speech
     audio_buffer: AudioBuffer,
@@ -99,10 +99,10 @@ impl Engine {
             state: EngineState::Idle,
             running: Arc::new(AtomicBool::new(false)),
             audio_tx: Some(audio_tx),
-            audio_rx: Some(audio_rx),
+            _audio_rx: Some(audio_rx),
             event_tx,
             event_rx,
-            inference_thread: None,
+            _inference_thread: None,
             audio_buffer: AudioBuffer::new(vd_core::SAMPLE_RATE),
         })
     }

@@ -13,23 +13,21 @@
     "windows": [
       {
         "title": "Voice-Dict",
-        "width": 400,
-        "height": 500,
-        "resizable": true,
+        "width": 320,
+        "height": 52,
+        "x": 100,
+        "y": 100,
+        "resizable": false,
         "fullscreen": false,
-        "center": true,
-        "decorations": true,
-        "transparent": false,
-        "minWidth": 350,
-        "minHeight": 400
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {
       "csp": null
-    },
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true
     }
   },
   "bundle": {
@@ -45,5 +43,10 @@
     "category": "Utility",
     "shortDescription": "Local voice dictation with Whisper",
     "longDescription": "Voice-Dict is a local-first voice dictation app that transcribes speech to text using Whisper and injects it into any application."
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
   }
 }
