@@ -170,6 +170,47 @@ If real-time UI feedback is needed:
 
 Fix audio capture reliability BEFORE adding real-time features.
 
+### Decision: No Major Refactor Now (2026-01-13)
+
+**Context:** Evaluated whether to refactor to streaming/real-time or switch to Python.
+
+**Decision:** Keep current Rust batch architecture. No refactor.
+
+**Reasoning:**
+
+1. **Python would NOT improve performance:**
+   - Whisper inference is C++/CUDA regardless of wrapper language
+   - Python adds interpreter overhead and potential IPC latency
+   - faster-whisper (CTranslate2) is faster but requires service boundary
+
+2. **Current bottleneck is audio capture, not architecture:**
+   - Bluetooth AirPods: 71.6% gap ratio (unusable)
+   - USB mic expected: <5% gap ratio (usable)
+   - Must fix input before optimizing processing
+
+3. **GPU already provides acceptable latency:**
+   - ~1s total latency for 20s audio
+   - Real-time partials would add complexity for marginal gain
+
+4. **Priority order:**
+   ```
+   1. ✅ GPU acceleration working
+   2. ⏳ Get reliable audio input (USB mic)
+   3. ⏳ Validate system with good audio
+   4. ⏳ Re-evaluate if real-time needed
+   ```
+
+**Future path (if real-time needed):**
+- Rolling buffer every 300-500ms
+- Stable prefix algorithm
+- Keep injection at end
+- No language change required
+
+**USB vs 3.5mm Audio Jack:**
+- USB preferred: consistent quality, no interference, plug-and-play
+- 3.5mm: depends on PC sound card quality, can have noise issues
+- Both have ~1-5ms latency (negligible vs ~1s Whisper processing)
+
 ---
 
 ## Performance Benchmarks
