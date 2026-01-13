@@ -31,9 +31,11 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::Sender;
-use std::sync::atomic::{AtomicBool, Ordering};
+use crossbeam_queue::ArrayQueue;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 use vd_core::{AudioChunk, AudioError, CHANNELS, SAMPLE_RATE};
 
@@ -60,6 +62,10 @@ impl Default for AudioCaptureConfig {
         }
     }
 }
+
+const AUDIO_RING_BUFFER_CHUNKS: usize = 256;
+const AUDIO_QUEUE_DRAIN_INTERVAL_MS: u64 = 2;
+const AUDIO_QUEUE_DROP_LOG_INTERVAL_MS: u64 = 1000;
 
 /// Information about an audio input device
 #[derive(Debug, Clone)]
@@ -232,6 +238,8 @@ fn run_capture_loop(
     let sample_rate = stream_config.sample_rate.0;
     let channels = stream_config.channels as usize;
     let target_channels = config.channels as usize;
+    let queue = Arc::new(ArrayQueue::new(AUDIO_RING_BUFFER_CHUNKS));
+    let dropped_chunks = Arc::new(AtomicUsize::new(0));
 
     // LOG THE ACTUAL SAMPLE RATES - critical for debugging resampling
     info!(
@@ -241,6 +249,8 @@ fn run_capture_loop(
 
     // Create the stream
     let running_cb = running.clone();
+    let queue_cb = queue.clone();
+    let dropped_chunks_cb = dropped_chunks.clone();
     let stream = device
         .build_input_stream(
             &stream_config,
@@ -269,10 +279,13 @@ fn run_capture_loop(
                     timestamp_ms,
                 };
 
-                // BLOCKING send - never drop audio
-                // With unbounded channel, this won't block, but ensures delivery
-                if let Err(e) = sender.send(chunk) {
-                    error!("Failed to send audio chunk: {}", e);
+                // Push into ring buffer to avoid blocking the audio callback.
+                if let Err(chunk) = queue_cb.push(chunk) {
+                    dropped_chunks_cb.fetch_add(1, Ordering::Relaxed);
+                    let _ = queue_cb.pop();
+                    if queue_cb.push(chunk).is_err() {
+                        dropped_chunks_cb.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             },
             move |err| {
@@ -287,9 +300,34 @@ fn run_capture_loop(
         .play()
         .map_err(|e| AudioError::StreamStartError(e.to_string()))?;
 
-    // Keep the stream alive while running
+    // Keep the stream alive while running and drain queued audio
+    let mut last_drop_log_at = std::time::Instant::now();
     while running.load(Ordering::SeqCst) {
-        thread::sleep(std::time::Duration::from_millis(10));
+        let mut drained_any = false;
+        while let Some(chunk) = queue.pop() {
+            drained_any = true;
+            if sender.send(chunk).is_err() {
+                warn!("Audio channel closed; stopping capture");
+                running.store(false, Ordering::SeqCst);
+                break;
+            }
+        }
+
+        let dropped = dropped_chunks.swap(0, Ordering::Relaxed);
+        if dropped > 0
+            && last_drop_log_at.elapsed().as_millis() as u64 >= AUDIO_QUEUE_DROP_LOG_INTERVAL_MS
+        {
+            warn!(
+                "Audio ring buffer overflow: dropped {} chunks (queue len={})",
+                dropped,
+                queue.len()
+            );
+            last_drop_log_at = std::time::Instant::now();
+        }
+
+        if !drained_any {
+            thread::sleep(Duration::from_millis(AUDIO_QUEUE_DRAIN_INTERVAL_MS));
+        }
     }
 
     // Stream is dropped here, stopping capture

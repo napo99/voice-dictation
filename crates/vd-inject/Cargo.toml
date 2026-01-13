@@ -10,3 +10,4 @@ vd-core.workspace = true
 enigo.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+cli-clipboard = "0.4"

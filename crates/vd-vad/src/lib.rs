@@ -50,7 +50,7 @@ pub struct VoiceActivityDetector {
     session: Session,
     config: VadConfig,
     /// Internal state for the LSTM model (h, c)
-    state: (Array2<f32>, Array2<f32>),
+    state: (Array3<f32>, Array3<f32>),
     /// Sample rate tensor (needed by model)
     sr_tensor: Array1<i64>,
     /// Current speech state
@@ -90,8 +90,8 @@ impl VoiceActivityDetector {
         info!("VAD model loaded successfully");
 
         // Initialize LSTM state (2 layers, 1 batch, 64 hidden size)
-        let h = Array2::zeros((2, 64));
-        let c = Array2::zeros((2, 64));
+        let h = Array3::zeros((2, 1, 64));
+        let c = Array3::zeros((2, 1, 64));
         let sr_tensor = Array1::from_vec(vec![VAD_SAMPLE_RATE]);
 
         Ok(Self {
@@ -140,9 +140,9 @@ impl VoiceActivityDetector {
         let input = Array2::from_shape_vec((1, VAD_CHUNK_SIZE), chunk.to_vec())
             .map_err(|e| VadError::OnnxError(e.to_string()))?;
 
-        // Prepare state tensors
-        let h = self.state.0.clone().insert_axis(ndarray::Axis(0)); // [1, 2, 64]
-        let c = self.state.1.clone().insert_axis(ndarray::Axis(0)); // [1, 2, 64]
+        // Prepare state tensors (already 3D: [2, 1, 64])
+        let h = self.state.0.clone();
+        let c = self.state.1.clone();
 
         // Create ONNX values
         let input_value =
@@ -185,9 +185,9 @@ impl VoiceActivityDetector {
             .into_dimensionality()
             .map_err(|e| VadError::OnnxError(e.to_string()))?;
 
-        // Remove batch dimension from state
-        self.state.0 = new_h.index_axis(ndarray::Axis(0), 0).to_owned();
-        self.state.1 = new_c.index_axis(ndarray::Axis(0), 0).to_owned();
+        // Update state (keep 3D)
+        self.state.0 = new_h;
+        self.state.1 = new_c;
 
         // Update probability accumulator for smoothing
         self.prob_accumulator += prob;
@@ -261,7 +261,7 @@ impl VoiceActivityDetector {
     ///
     /// Call this when starting a new recording session.
     pub fn reset(&mut self) {
-        self.state = (Array2::zeros((2, 64)), Array2::zeros((2, 64)));
+        self.state = (Array3::zeros((2, 1, 64)), Array3::zeros((2, 1, 64)));
         self.speech_active = false;
         self.samples_since_change = 0;
         self.prob_accumulator = 0.0;
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn test_vad_config_default() {
         let config = VadConfig::default();
-        assert_eq!(config.threshold, 0.5);
+        assert_eq!(config.threshold, 0.3);
         assert!(config.min_speech_duration_ms > 0);
         assert!(config.silence_duration_ms > 0);
     }

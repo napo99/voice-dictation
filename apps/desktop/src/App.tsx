@@ -25,6 +25,49 @@ interface PipelineEvent {
 }
 
 // ============================================================================
+// Sound Wave Component
+// ============================================================================
+
+interface SoundWaveProps {
+  audioLevel: number;
+  isRecording: boolean;
+}
+
+function SoundWave({ audioLevel, isRecording }: SoundWaveProps) {
+  // Generate 5 bar heights based on audio level when recording
+  const getBarHeights = () => {
+    if (!isRecording) return [8, 8, 8, 8, 8];
+
+    // Create varied heights based on audio level
+    const base = 6;
+    const maxHeight = 24;
+    const level = Math.min(1, audioLevel);
+
+    return [
+      base + level * (maxHeight - base) * 0.7,
+      base + level * (maxHeight - base) * 1.0,
+      base + level * (maxHeight - base) * 0.85,
+      base + level * (maxHeight - base) * 0.95,
+      base + level * (maxHeight - base) * 0.6,
+    ];
+  };
+
+  const heights = getBarHeights();
+
+  return (
+    <div className={`sound-wave ${isRecording ? 'reactive' : ''}`}>
+      {heights.map((height, i) => (
+        <div
+          key={i}
+          className="bar"
+          style={isRecording ? { height: `${height}px` } : undefined}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ============================================================================
 // Pill Component
 // ============================================================================
 
@@ -138,16 +181,24 @@ function App() {
   // Drag Handling
   // ============================================================================
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.settings-button')) {
-      return; // Don't drag when clicking settings
+  const handleMouseDown = useCallback(async (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.settings-button') ||
+        (e.target as HTMLElement).closest('.record-button')) {
+      return; // Don't drag when clicking buttons
     }
 
-    setIsDragging(true);
-    setDragOffset({
-      x: e.clientX,
-      y: e.clientY,
-    });
+    // Use Tauri's native window dragging for better compatibility
+    try {
+      const window = getCurrentWindow();
+      await window.startDragging();
+    } catch (err) {
+      // Fallback to manual dragging
+      setIsDragging(true);
+      setDragOffset({
+        x: e.clientX,
+        y: e.clientY,
+      });
+    }
   }, []);
 
   const handleMouseMove = useCallback(
@@ -184,7 +235,7 @@ function App() {
   }, [isDragging, handleMouseMove, handleMouseUp]);
 
   // ============================================================================
-  // Render
+  // Render Helpers
   // ============================================================================
 
   const getStateClass = () => {
@@ -226,35 +277,7 @@ function App() {
     }
   };
 
-  // Models not available - show download prompt
-  if (!modelsAvailable) {
-    return (
-      <div className="pill models-missing" ref={pillRef} onMouseDown={handleMouseDown}>
-        <div className="status-icon error">!</div>
-        <div className="content">
-          <span className="text">Models required</span>
-          <span className="subtext">{modelsDir}</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Error state
-  if (error) {
-    return (
-      <div className="pill error-state" ref={pillRef} onMouseDown={handleMouseDown}>
-        <div className="status-icon error">!</div>
-        <div className="content">
-          <span className="text">{error}</span>
-        </div>
-        <button className="dismiss-button" onClick={() => setError(null)}>
-          ×
-        </button>
-      </div>
-    );
-  }
-
-  // Manual record handlers (for testing without hotkey)
+  // Manual record handlers
   const handleRecordStart = async () => {
     console.log('Manual record start clicked');
     try {
@@ -275,73 +298,120 @@ function App() {
     }
   };
 
-  // Normal pill
+  // ============================================================================
+  // Render: Models Missing
+  // ============================================================================
+
+  if (!modelsAvailable) {
+    return (
+      <div className="pill models-missing" ref={pillRef} onMouseDown={handleMouseDown} data-tauri-drag-region>
+        <SoundWave audioLevel={0} isRecording={false} />
+        <div className="content">
+          <span className="text">Models required</span>
+          <span className="subtext">{modelsDir}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // Render: Error State
+  // ============================================================================
+
+  if (error) {
+    return (
+      <div className="pill error-state" ref={pillRef} onMouseDown={handleMouseDown} data-tauri-drag-region>
+        <div className="status-icon error">!</div>
+        <div className="content">
+          <span className="text">{error}</span>
+        </div>
+        <button className="dismiss-button" onClick={() => setError(null)}>
+          ×
+        </button>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // Render: Normal Pill
+  // ============================================================================
+
   return (
     <div
       className={`pill ${getStateClass()} ${isDragging ? 'dragging' : ''}`}
       ref={pillRef}
       onMouseDown={handleMouseDown}
+      data-tauri-drag-region
     >
-      <div className="status-icon">
-        <div className="dot" />
-        {status.is_recording && (
-          <div
-            className="audio-ring"
-            style={{
-              transform: `scale(${1 + status.audio_level * 0.5})`,
-              opacity: 0.3 + status.audio_level * 0.7,
-            }}
-          />
-        )}
-      </div>
+      {/* Sound Wave Visualizer */}
+      <SoundWave
+        audioLevel={status.audio_level}
+        isRecording={status.state === 'Recording'}
+      />
 
+      {/* Content */}
       <div className="content">
         <span className="text">{getStatusText()}</span>
       </div>
 
-      {/* Manual record button for testing */}
-      <button
-        className="record-button"
-        title={status.is_recording ? "Stop Recording" : "Start Recording"}
-        onMouseDown={(e) => {
-          e.stopPropagation();
-          handleRecordStart();
-        }}
-        onMouseUp={(e) => {
-          e.stopPropagation();
-          handleRecordStop();
-        }}
-        onMouseLeave={() => {
-          if (status.is_recording) {
+      {/* Buttons */}
+      <div className="button-group">
+        {/* Record Button */}
+        <button
+          className={`record-button ${status.is_recording ? 'active' : ''}`}
+          title={status.is_recording ? 'Stop Recording' : 'Start Recording'}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            handleRecordStart();
+          }}
+          onMouseUp={(e) => {
+            e.stopPropagation();
             handleRecordStop();
-          }
-        }}
-      >
-        {status.is_recording ? '⏹' : '🎤'}
-      </button>
+          }}
+          onMouseLeave={() => {
+            if (status.is_recording) {
+              handleRecordStop();
+            }
+          }}
+        >
+          {status.is_recording ? (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <rect x="2" y="2" width="10" height="10" rx="1" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <circle cx="7" cy="7" r="5" />
+            </svg>
+          )}
+        </button>
 
-      <button
-        className="settings-button"
-        title="Settings"
-        onClick={async (e) => {
-          e.stopPropagation();
-          try {
-            const devices = await invoke<string[]>('list_audio_devices');
-            const deviceList = devices.length > 0
-              ? devices.map(d => `  • ${d}`).join('\n')
-              : '  (No devices found)';
-            alert(`Voice-Dict Settings\n\n` +
-              `Hotkey: Alt+Shift+V (may not work in WSL2)\n\n` +
-              `Audio Input Devices:\n${deviceList}\n\n` +
-              `Model: Whisper base.en\n\n` +
-              `Tip: Hold the 🎤 button to record!`);
-          } catch (err) {
-            alert(`Settings Error: ${err}`);
-          }
-        }}
-      >
-        ⚙
-      </button>
+        {/* Settings Button */}
+        <button
+          className="settings-button"
+          title="Settings"
+          onClick={async (e) => {
+            e.stopPropagation();
+            try {
+              const devices = await invoke<string[]>('list_audio_devices');
+              const deviceList = devices.length > 0
+                ? devices.map(d => `  • ${d}`).join('\n')
+                : '  (No devices found)';
+              alert(`Voice-Dict Settings\n\n` +
+                `Hotkey: Alt+Shift+V\n\n` +
+                `Audio Input Devices:\n${deviceList}\n\n` +
+                `Model: Whisper base.en\n\n` +
+                `Tip: Press Alt+Shift+V to toggle recording!`);
+            } catch (err) {
+              alert(`Settings Error: ${err}`);
+            }
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 10a2 2 0 100-4 2 2 0 000 4z" />
+            <path fillRule="evenodd" d="M8 0a1 1 0 011 1v1.07a5.5 5.5 0 012.36 1.36l.93-.54a1 1 0 011 1.73l-.93.54A5.5 5.5 0 0113 8a5.5 5.5 0 01-.64 2.84l.93.54a1 1 0 01-1 1.73l-.93-.54a5.5 5.5 0 01-2.36 1.36V15a1 1 0 11-2 0v-1.07a5.5 5.5 0 01-2.36-1.36l-.93.54a1 1 0 01-1-1.73l.93-.54A5.5 5.5 0 013 8c0-.99.26-1.92.64-2.84l-.93-.54a1 1 0 011-1.73l.93.54A5.5 5.5 0 017 2.07V1a1 1 0 011-1zm0 4.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" clipRule="evenodd" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }

@@ -241,6 +241,8 @@ impl AudioBuffer {
 pub struct AudioChunk {
     /// Raw samples for this chunk
     pub samples: Vec<f32>,
+    /// Sample rate of these samples (may differ from SAMPLE_RATE)
+    pub sample_rate: u32,
     /// Timestamp in milliseconds from recording start
     pub timestamp_ms: u64,
 }
@@ -278,8 +280,8 @@ pub struct VadConfig {
 impl Default for VadConfig {
     fn default() -> Self {
         Self {
-            threshold: 0.5,
-            min_speech_duration_ms: 250,
+            threshold: 0.3,
+            min_speech_duration_ms: 100,
             silence_duration_ms: 500,
             speech_pad_ms: 100,
         }
@@ -325,10 +327,10 @@ impl TranscriptionResult {
 pub enum WhisperModel {
     /// Tiny model (~39MB) - fastest, lower accuracy
     Tiny,
-    /// Base model (~74MB) - balanced
-    #[default]
+    /// Base model (~74MB) - fast, decent accuracy
     Base,
-    /// Small model (~244MB) - better accuracy
+    /// Small model (~244MB) - better accuracy (recommended)
+    #[default]
     Small,
     /// Medium model (~769MB) - high accuracy
     Medium,
@@ -543,8 +545,8 @@ mod tests {
     #[test]
     fn test_vad_config_default() {
         let config = VadConfig::default();
-        assert_eq!(config.threshold, 0.5);
-        assert_eq!(config.min_speech_duration_ms, 250);
+        assert_eq!(config.threshold, 0.3);
+        assert_eq!(config.min_speech_duration_ms, 100);
         assert_eq!(config.silence_duration_ms, 500);
     }
 

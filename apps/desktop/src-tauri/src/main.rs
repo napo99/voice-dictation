@@ -13,15 +13,33 @@
 mod pipeline;
 
 use std::sync::{Arc, Mutex};
+use once_cell::sync::Lazy;
 use tauri::{
-    AppHandle, Emitter, State, WebviewWindow,
+    AppHandle, Emitter, Manager, State, WebviewWindow,
     WebviewWindowBuilder,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use pipeline::{Pipeline, PipelineConfig, PipelineEvent, PipelineState};
+
+// ============================================================================
+// Global Pipeline (for hotkey access)
+// ============================================================================
+
+/// Global pipeline instance for hotkey handler access
+static GLOBAL_PIPELINE: Lazy<Arc<Mutex<Option<Pipeline>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
+
+/// Global app handle for event emission
+static GLOBAL_APP: Lazy<Arc<Mutex<Option<AppHandle>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
+
+/// Toggle mode flag - if true, single press toggles recording on/off (like Wispr Flow)
+/// If false, uses push-to-talk (hold to record)
+static TOGGLE_MODE: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
+
+/// Recording state for toggle mode
+static IS_RECORDING: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(false)));
 
 // ============================================================================
 // Application State
@@ -29,14 +47,12 @@ use pipeline::{Pipeline, PipelineConfig, PipelineEvent, PipelineState};
 
 /// Shared application state
 struct AppState {
-    pipeline: Arc<Mutex<Option<Pipeline>>>,
     window_position: Arc<Mutex<(f64, f64)>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
-            pipeline: Arc::new(Mutex::new(None)),
             window_position: Arc::new(Mutex::new((100.0, 100.0))),
         }
     }
@@ -68,8 +84,8 @@ pub struct PositionUpdate {
 
 /// Get current pill status
 #[tauri::command]
-fn get_status(state: State<AppState>) -> PillStatus {
-    let pipeline = state.pipeline.lock().unwrap();
+fn get_status() -> PillStatus {
+    let pipeline = GLOBAL_PIPELINE.lock().unwrap();
 
     if let Some(ref p) = *pipeline {
         let pstate = p.state();
@@ -89,52 +105,95 @@ fn get_status(state: State<AppState>) -> PillStatus {
     }
 }
 
-/// Start recording (called on hotkey press)
-#[tauri::command]
-async fn start_recording(state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
-    info!("Hotkey pressed - starting recording");
-
-    let mut pipeline = state.pipeline.lock().unwrap();
+/// Initialize pipeline if not already done
+fn ensure_pipeline_initialized() -> Result<(), String> {
+    let mut pipeline = GLOBAL_PIPELINE.lock().unwrap();
 
     if pipeline.is_none() {
-        // Initialize pipeline on first use
+        info!("Initializing pipeline on first use");
         let config = PipelineConfig::default();
-        let app_clone = app.clone();
+
+        // Get app handle for event emission
+        let app_handle = {
+            let app = GLOBAL_APP.lock().unwrap();
+            app.clone()
+        };
 
         let event_callback = move |event: PipelineEvent| {
-            // Forward pipeline events to frontend
-            let _ = app_clone.emit("pipeline-event", event);
+            // Reset IS_RECORDING when pipeline completes (goes back to Idle after injection)
+            if let PipelineEvent::StateChanged(ref state) = event {
+                if state == "Idle" {
+                    let mut is_recording = IS_RECORDING.lock().unwrap();
+                    if *is_recording {
+                        info!("Pipeline returned to Idle - resetting recording flag");
+                        *is_recording = false;
+                    }
+                }
+            }
+            if let Some(ref app) = app_handle {
+                let _ = app.emit("pipeline-event", &event);
+            }
         };
 
         *pipeline = Some(Pipeline::new(config, Box::new(event_callback))
             .map_err(|e| e.to_string())?);
+        info!("Pipeline initialized successfully");
     }
 
+    Ok(())
+}
+
+/// Start recording - called directly from hotkey handler
+fn do_start_recording() {
+    info!(">>> Starting recording (direct call) <<<");
+
+    if let Err(e) = ensure_pipeline_initialized() {
+        error!("Failed to initialize pipeline: {}", e);
+        return;
+    }
+
+    let mut pipeline = GLOBAL_PIPELINE.lock().unwrap();
     if let Some(ref mut p) = *pipeline {
-        p.start_recording().map_err(|e| e.to_string())?;
+        if let Err(e) = p.start_recording() {
+            error!("Failed to start recording: {}", e);
+        } else {
+            info!("Recording started successfully");
+        }
     }
+}
 
+/// Stop recording - called directly from hotkey handler
+fn do_stop_recording() {
+    info!(">>> Stopping recording (direct call) <<<");
+
+    let mut pipeline = GLOBAL_PIPELINE.lock().unwrap();
+    if let Some(ref mut p) = *pipeline {
+        if let Err(e) = p.stop_recording() {
+            error!("Failed to stop recording: {}", e);
+        } else {
+            info!("Recording stopped, processing...");
+        }
+    }
+}
+
+/// Start recording (called on hotkey press)
+#[tauri::command]
+async fn start_recording() -> Result<(), String> {
+    do_start_recording();
     Ok(())
 }
 
 /// Stop recording (called on hotkey release)
 #[tauri::command]
-async fn stop_recording(state: State<'_, AppState>) -> Result<(), String> {
-    info!("Hotkey released - stopping recording");
-
-    let mut pipeline = state.pipeline.lock().unwrap();
-
-    if let Some(ref mut p) = *pipeline {
-        p.stop_recording().map_err(|e| e.to_string())?;
-    }
-
+async fn stop_recording() -> Result<(), String> {
+    do_stop_recording();
     Ok(())
 }
 
 /// Cancel current operation
 #[tauri::command]
-fn cancel(state: State<AppState>) -> Result<(), String> {
-    let mut pipeline = state.pipeline.lock().unwrap();
+fn cancel() -> Result<(), String> {
+    let mut pipeline = GLOBAL_PIPELINE.lock().unwrap();
 
     if let Some(ref mut p) = *pipeline {
         p.cancel();
@@ -156,7 +215,7 @@ fn update_position(state: State<AppState>, pos: PositionUpdate) {
 fn check_models() -> bool {
     let models_dir = vd_core::models_dir();
     let vad_path = models_dir.join(vd_core::SILERO_VAD_MODEL.path);
-    let whisper_path = models_dir.join(vd_core::WhisperModel::Base.filename());
+    let whisper_path = models_dir.join(vd_core::WhisperModel::Small.filename());
 
     let vad_exists = vad_path.exists();
     let whisper_exists = whisper_path.exists();
@@ -273,37 +332,79 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .manage(AppState::default())
-        .setup(|app| {
-            // Register global hotkey (Ctrl+Shift+Space)
-            use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(move |app, _shortcut, event| {
+                    use tauri_plugin_global_shortcut::ShortcutState;
+                    let toggle_mode = *TOGGLE_MODE.lock().unwrap();
 
-            let shortcut: Shortcut = "Alt+Shift+V".parse().unwrap();
-
-            app.handle().plugin(
-                tauri_plugin_global_shortcut::Builder::new()
-                    .with_handler(move |_app, _shortcut, event| {
-                        match event.state() {
-                            ShortcutState::Pressed => {
+                    match event.state() {
+                        ShortcutState::Pressed => {
+                            if toggle_mode {
+                                // Toggle mode: press toggles recording on/off
+                                let mut is_recording = IS_RECORDING.lock().unwrap();
+                                if *is_recording {
+                                    info!("===========================================");
+                                    info!(">>> HOTKEY: STOP RECORDING (toggle) <<<");
+                                    info!("===========================================");
+                                    *is_recording = false;
+                                    drop(is_recording); // Release lock before calling
+                                    do_stop_recording();
+                                    let _ = app.emit("hotkey-released", ());
+                                } else {
+                                    info!("===========================================");
+                                    info!(">>> HOTKEY: START RECORDING (toggle) <<<");
+                                    info!("===========================================");
+                                    *is_recording = true;
+                                    drop(is_recording); // Release lock before calling
+                                    do_start_recording();
+                                    let _ = app.emit("hotkey-pressed", ());
+                                }
+                            } else {
+                                // Push-to-talk mode: hold to record
                                 info!("===========================================");
-                                info!(">>> HOTKEY PRESSED - Starting recording <<<");
+                                info!(">>> HOTKEY PRESSED (push-to-talk) <<<");
                                 info!("===========================================");
-                                let _ = _app.emit("hotkey-pressed", ());
-                            }
-                            ShortcutState::Released => {
-                                info!("===========================================");
-                                info!(">>> HOTKEY RELEASED - Stopping recording <<<");
-                                info!("===========================================");
-                                let _ = _app.emit("hotkey-released", ());
+                                do_start_recording();
+                                let _ = app.emit("hotkey-pressed", ());
                             }
                         }
-                    })
-                    .build(),
-            )?;
+                        ShortcutState::Released => {
+                            if !toggle_mode {
+                                // Push-to-talk mode: release stops recording
+                                info!("===========================================");
+                                info!(">>> HOTKEY RELEASED (push-to-talk) <<<");
+                                info!("===========================================");
+                                do_stop_recording();
+                                let _ = app.emit("hotkey-released", ());
+                            }
+                            // In toggle mode, release is ignored
+                        }
+                    }
+                })
+                .build(),
+        )
+        .manage(AppState::default())
+        .setup(|app| {
+            use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
+            // Store app handle globally for pipeline event emission
+            {
+                let mut global_app = GLOBAL_APP.lock().unwrap();
+                *global_app = Some(app.handle().clone());
+            }
+            info!("Global app handle stored");
+
+            let shortcut: Shortcut = "Alt+Shift+V".parse().unwrap();
             app.global_shortcut().register(shortcut)?;
             info!("Registered global shortcut: Alt+Shift+V");
+
+            let toggle_mode = *TOGGLE_MODE.lock().unwrap();
+            if toggle_mode {
+                info!("Mode: TOGGLE (press once to start, press again to stop)");
+            } else {
+                info!("Mode: PUSH-TO-TALK (hold to record, release to stop)");
+            }
 
             Ok(())
         })

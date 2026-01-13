@@ -1,16 +1,26 @@
-/* Voice-Dict Floating Pill Styles */
+/* Voice-Dict - Sleek Floating Pill with Sound Wave Animation */
 
 :root {
-  --pill-bg: rgba(26, 26, 46, 0.95);
-  --pill-border: rgba(255, 255, 255, 0.1);
+  --pill-bg: rgba(18, 18, 24, 0.92);
+  --pill-bg-active: rgba(24, 24, 32, 0.95);
+  --pill-border: rgba(255, 255, 255, 0.08);
   --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.6);
-  --accent-idle: #6b7280;
-  --accent-listening: #fbbf24;
+  --text-secondary: rgba(255, 255, 255, 0.5);
+
+  /* Accent colors */
+  --accent-idle: #4a5568;
+  --accent-listening: #f59e0b;
   --accent-recording: #ef4444;
-  --accent-processing: #3b82f6;
+  --accent-processing: #6366f1;
   --accent-success: #10b981;
   --accent-error: #ef4444;
+
+  /* Glow colors */
+  --glow-idle: rgba(74, 85, 104, 0.3);
+  --glow-listening: rgba(245, 158, 11, 0.4);
+  --glow-recording: rgba(239, 68, 68, 0.5);
+  --glow-processing: rgba(99, 102, 241, 0.4);
+  --glow-success: rgba(16, 185, 129, 0.4);
 }
 
 * {
@@ -23,138 +33,227 @@ html, body, #root {
   height: 100%;
   background: transparent;
   overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  /* Ensure mouse events work on transparent window */
+  -webkit-app-region: drag;
+}
+
+/* Buttons should not be draggable */
+button, .record-button, .settings-button, .dismiss-button {
+  -webkit-app-region: no-drag;
 }
 
 /* ============================================================================
-   Pill Container
+   Pill Container - Minimal & Sleek
    ============================================================================ */
 
 .pill {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
 
-  height: 48px;
-  padding: 0 16px;
+  height: 56px;
+  padding: 0 20px;
 
   background: var(--pill-bg);
   border: 1px solid var(--pill-border);
-  border-radius: 24px;
+  border-radius: 28px;
 
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 
   cursor: grab;
   user-select: none;
 
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+.pill::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 29px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+  pointer-events: none;
+  opacity: 0.5;
 }
 
 .pill:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  background: var(--pill-bg-active);
+  transform: translateY(-1px);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
 }
 
 .pill.dragging {
   cursor: grabbing;
-  transform: scale(1.02);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  transform: scale(1.02) translateY(-2px);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset;
 }
 
 /* ============================================================================
-   Status Icon
+   Sound Wave Visualizer
    ============================================================================ */
 
-.status-icon {
-  position: relative;
-  width: 20px;
-  height: 20px;
+.sound-wave {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 3px;
+  width: 32px;
+  height: 32px;
 }
 
-.status-icon .dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+.sound-wave .bar {
+  width: 3px;
+  height: 8px;
   background: var(--accent-idle);
-  transition: all 0.3s ease;
+  border-radius: 2px;
+  transition: background 0.3s ease;
 }
 
-.status-icon .audio-ring {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 2px solid var(--accent-recording);
-  transition: transform 0.1s ease, opacity 0.1s ease;
+/* Idle state - minimal bars */
+.pill.idle .sound-wave .bar {
+  animation: idle-wave 2s ease-in-out infinite;
 }
 
-/* State-based styles - VERY OBVIOUS colors */
-.pill.idle {
-  background: #1a1a2e;
-  border-color: #6b7280;
+.pill.idle .sound-wave .bar:nth-child(1) { animation-delay: 0s; }
+.pill.idle .sound-wave .bar:nth-child(2) { animation-delay: 0.1s; }
+.pill.idle .sound-wave .bar:nth-child(3) { animation-delay: 0.2s; }
+.pill.idle .sound-wave .bar:nth-child(4) { animation-delay: 0.3s; }
+.pill.idle .sound-wave .bar:nth-child(5) { animation-delay: 0.4s; }
+
+@keyframes idle-wave {
+  0%, 100% { height: 6px; opacity: 0.4; }
+  50% { height: 10px; opacity: 0.6; }
 }
 
-.pill.idle .dot {
-  background: var(--accent-idle);
-}
-
-.pill.listening {
-  background: #3d3200;
-  border-color: #fbbf24;
-  border-width: 2px;
-}
-
-.pill.listening .dot {
+/* Listening state - gentle pulse */
+.pill.listening .sound-wave .bar {
   background: var(--accent-listening);
-  animation: pulse 1.5s ease-in-out infinite;
+  animation: listening-wave 1.2s ease-in-out infinite;
 }
 
-.pill.recording {
-  background: #3d0a0a;
-  border-color: #ef4444;
-  border-width: 3px;
+.pill.listening .sound-wave .bar:nth-child(1) { animation-delay: 0s; }
+.pill.listening .sound-wave .bar:nth-child(2) { animation-delay: 0.08s; }
+.pill.listening .sound-wave .bar:nth-child(3) { animation-delay: 0.16s; }
+.pill.listening .sound-wave .bar:nth-child(4) { animation-delay: 0.24s; }
+.pill.listening .sound-wave .bar:nth-child(5) { animation-delay: 0.32s; }
+
+@keyframes listening-wave {
+  0%, 100% { height: 8px; }
+  50% { height: 16px; }
 }
 
-.pill.recording .dot {
+/* Recording state - active wave */
+.pill.recording .sound-wave .bar {
   background: var(--accent-recording);
-  animation: pulse 0.8s ease-in-out infinite;
+  animation: recording-wave 0.4s ease-in-out infinite;
 }
 
-.pill.processing {
-  background: #0a1a3d;
-  border-color: #3b82f6;
-  border-width: 2px;
+.pill.recording .sound-wave .bar:nth-child(1) { animation-delay: 0s; }
+.pill.recording .sound-wave .bar:nth-child(2) { animation-delay: 0.05s; }
+.pill.recording .sound-wave .bar:nth-child(3) { animation-delay: 0.1s; }
+.pill.recording .sound-wave .bar:nth-child(4) { animation-delay: 0.15s; }
+.pill.recording .sound-wave .bar:nth-child(5) { animation-delay: 0.2s; }
+
+@keyframes recording-wave {
+  0%, 100% { height: 6px; }
+  25% { height: 24px; }
+  50% { height: 12px; }
+  75% { height: 20px; }
 }
 
-.pill.processing .dot {
+/* Processing state - loading wave */
+.pill.processing .sound-wave .bar {
   background: var(--accent-processing);
-  animation: spin 1s linear infinite;
+  animation: processing-wave 0.8s ease-in-out infinite;
 }
 
-.pill.injecting {
-  background: #0a3d1a;
-  border-color: #10b981;
-  border-width: 2px;
+.pill.processing .sound-wave .bar:nth-child(1) { animation-delay: 0s; }
+.pill.processing .sound-wave .bar:nth-child(2) { animation-delay: 0.1s; }
+.pill.processing .sound-wave .bar:nth-child(3) { animation-delay: 0.2s; }
+.pill.processing .sound-wave .bar:nth-child(4) { animation-delay: 0.3s; }
+.pill.processing .sound-wave .bar:nth-child(5) { animation-delay: 0.4s; }
+
+@keyframes processing-wave {
+  0%, 100% { height: 6px; transform: scaleY(1); }
+  50% { height: 18px; transform: scaleY(1.2); }
 }
 
-.pill.injecting .dot {
+/* Injecting/Success state - celebration wave */
+.pill.injecting .sound-wave .bar {
   background: var(--accent-success);
+  animation: success-wave 0.6s ease-out forwards;
 }
 
-.pill.error-state .dot,
-.status-icon.error {
-  background: var(--accent-error);
-  color: var(--accent-error);
-  font-weight: bold;
-  font-size: 14px;
+.pill.injecting .sound-wave .bar:nth-child(1) { animation-delay: 0s; }
+.pill.injecting .sound-wave .bar:nth-child(2) { animation-delay: 0.05s; }
+.pill.injecting .sound-wave .bar:nth-child(3) { animation-delay: 0.1s; }
+.pill.injecting .sound-wave .bar:nth-child(4) { animation-delay: 0.15s; }
+.pill.injecting .sound-wave .bar:nth-child(5) { animation-delay: 0.2s; }
+
+@keyframes success-wave {
+  0% { height: 6px; }
+  40% { height: 22px; }
+  100% { height: 10px; }
 }
 
 /* ============================================================================
-   Content
+   State-based Pill Styles
+   ============================================================================ */
+
+.pill.idle {
+  border-color: rgba(74, 85, 104, 0.3);
+}
+
+.pill.listening {
+  background: rgba(24, 22, 16, 0.95);
+  border-color: rgba(245, 158, 11, 0.4);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    0 0 20px var(--glow-listening);
+}
+
+.pill.recording {
+  background: rgba(28, 16, 16, 0.95);
+  border-color: rgba(239, 68, 68, 0.5);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    0 0 30px var(--glow-recording);
+  animation: recording-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  0%, 100% { box-shadow: 0 4px 24px rgba(0,0,0,0.4), 0 0 20px var(--glow-recording); }
+  50% { box-shadow: 0 4px 24px rgba(0,0,0,0.4), 0 0 40px var(--glow-recording); }
+}
+
+.pill.processing {
+  background: rgba(18, 18, 28, 0.95);
+  border-color: rgba(99, 102, 241, 0.4);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    0 0 20px var(--glow-processing);
+}
+
+.pill.injecting {
+  background: rgba(16, 24, 20, 0.95);
+  border-color: rgba(16, 185, 129, 0.4);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    0 0 20px var(--glow-success);
+}
+
+/* ============================================================================
+   Content Area
    ============================================================================ */
 
 .content {
@@ -172,68 +271,97 @@ html, body, #root {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  letter-spacing: -0.01em;
 }
 
 .content .subtext {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 200px;
+  margin-top: 2px;
 }
 
+/* State-specific text colors */
+.pill.listening .content .text { color: rgba(245, 158, 11, 0.9); }
+.pill.recording .content .text { color: rgba(239, 68, 68, 0.9); }
+.pill.processing .content .text { color: rgba(99, 102, 241, 0.9); }
+.pill.injecting .content .text { color: rgba(16, 185, 129, 0.9); }
+
 /* ============================================================================
-   Buttons
+   Buttons - Minimal & Clean
    ============================================================================ */
 
+.button-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .record-button {
-  background: rgba(239, 68, 68, 0.2);
-  border: 2px solid #ef4444;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1.5px solid rgba(239, 68, 68, 0.4);
+  border-radius: 50%;
   color: #ef4444;
-  font-size: 18px;
-  padding: 6px 10px;
+  font-size: 14px;
   cursor: pointer;
-  border-radius: 8px;
-  transition: all 0.2s ease;
-  margin-right: 4px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .record-button:hover {
-  background: rgba(239, 68, 68, 0.4);
-  transform: scale(1.1);
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.6);
+  transform: scale(1.08);
 }
 
-.record-button:active {
+.record-button:active,
+.record-button.active {
   background: #ef4444;
   color: white;
   transform: scale(0.95);
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.5);
 }
 
 .settings-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
   background: transparent;
   border: none;
   color: var(--text-secondary);
   font-size: 16px;
-  padding: 4px 8px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 50%;
   transition: all 0.2s ease;
 }
 
 .settings-button:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
+  transform: rotate(30deg);
 }
 
 .dismiss-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   background: transparent;
   border: none;
   color: var(--text-secondary);
   font-size: 18px;
-  padding: 4px 8px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 50%;
   transition: all 0.2s ease;
 }
 
@@ -247,62 +375,68 @@ html, body, #root {
    ============================================================================ */
 
 .pill.models-missing {
-  background: rgba(239, 68, 68, 0.2);
+  background: rgba(28, 16, 16, 0.95);
   border-color: rgba(239, 68, 68, 0.3);
+}
+
+.pill.models-missing .sound-wave .bar {
+  background: var(--accent-error);
+  animation: error-shake 0.5s ease-in-out;
 }
 
 .pill.error-state {
-  background: rgba(239, 68, 68, 0.15);
+  background: rgba(28, 16, 16, 0.95);
   border-color: rgba(239, 68, 68, 0.3);
 }
 
-/* ============================================================================
-   Animations
-   ============================================================================ */
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.6;
-    transform: scale(0.9);
-  }
+.status-icon.error {
+  color: var(--accent-error);
+  font-weight: 700;
+  font-size: 18px;
 }
 
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+@keyframes error-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
 }
 
 /* ============================================================================
-   Recording Animation
+   Audio Level Reactive Bars (dynamic via inline styles)
    ============================================================================ */
 
-.pill.recording::before {
-  content: '';
-  position: absolute;
-  inset: -2px;
-  border-radius: 26px;
-  background: linear-gradient(90deg,
-    transparent,
-    rgba(239, 68, 68, 0.3),
-    transparent
-  );
-  animation: recording-glow 2s linear infinite;
-  z-index: -1;
+.sound-wave.reactive .bar {
+  transition: height 0.05s ease-out;
 }
 
-@keyframes recording-glow {
-  0% {
-    transform: translateX(-100%);
+/* ============================================================================
+   Transcript Animation
+   ============================================================================ */
+
+.content .text.typing {
+  animation: typing-cursor 0.8s ease-in-out infinite;
+}
+
+@keyframes typing-cursor {
+  0%, 100% { border-right: 2px solid transparent; }
+  50% { border-right: 2px solid var(--text-primary); }
+}
+
+/* ============================================================================
+   Responsive Adjustments
+   ============================================================================ */
+
+@media (max-width: 400px) {
+  .pill {
+    padding: 0 14px;
+    gap: 10px;
   }
-  100% {
-    transform: translateX(100%);
+
+  .content .text {
+    font-size: 13px;
+  }
+
+  .sound-wave {
+    width: 28px;
   }
 }

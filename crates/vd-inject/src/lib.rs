@@ -22,10 +22,11 @@
 //! injector.inject("Hello, World!")?;
 //! ```
 
-use enigo::{Enigo, Keyboard, Settings};
+use cli_clipboard::{ClipboardContext, ClipboardProvider};
+use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::thread;
 use std::time::Duration;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 use vd_core::InjectionError;
 
 /// Default delay between characters in milliseconds
@@ -38,6 +39,9 @@ pub struct InjectorConfig {
     pub char_delay_ms: u64,
     /// Whether to clear any existing selection before injecting
     pub clear_selection: bool,
+    /// Use clipboard-based injection (Ctrl+V) instead of direct typing
+    /// This is more reliable on Windows with focus issues
+    pub use_clipboard: bool,
 }
 
 impl Default for InjectorConfig {
@@ -45,6 +49,7 @@ impl Default for InjectorConfig {
         Self {
             char_delay_ms: DEFAULT_CHAR_DELAY_MS,
             clear_selection: false,
+            use_clipboard: true, // Default to clipboard on Windows for reliability
         }
     }
 }
@@ -84,21 +89,63 @@ impl TextInjector {
             return Ok(());
         }
 
-        debug!("Injecting {} characters", text.len());
+        debug!("Injecting {} characters (clipboard={})", text.len(), self.config.use_clipboard);
 
-        // Use enigo's text method for efficient text injection
-        self.enigo
-            .text(text)
-            .map_err(|e| InjectionError::InjectionFailed(e.to_string()))?;
+        if self.config.use_clipboard {
+            // Use clipboard-based injection for better Windows compatibility
+            self.inject_via_clipboard(text)?;
+        } else {
+            // Use enigo's text method for direct text injection
+            self.enigo
+                .text(text)
+                .map_err(|e| InjectionError::InjectionFailed(e.to_string()))?;
 
-        // Add delay if configured
-        if self.config.char_delay_ms > 0 {
-            thread::sleep(Duration::from_millis(
-                self.config.char_delay_ms * text.len() as u64,
-            ));
+            // Add delay if configured
+            if self.config.char_delay_ms > 0 {
+                thread::sleep(Duration::from_millis(
+                    self.config.char_delay_ms * text.len() as u64,
+                ));
+            }
         }
 
         trace!("Text injected successfully");
+        Ok(())
+    }
+
+    /// Inject text via clipboard (copy + Ctrl+V)
+    ///
+    /// This method is more reliable on Windows as it doesn't depend on
+    /// the enigo text method which can have issues with window focus.
+    fn inject_via_clipboard(&mut self, text: &str) -> Result<(), InjectionError> {
+        // Copy text to clipboard
+        let mut ctx: ClipboardContext = ClipboardProvider::new()
+            .map_err(|e| InjectionError::InjectionFailed(format!("Clipboard init failed: {}", e)))?;
+
+        ctx.set_contents(text.to_owned())
+            .map_err(|e| InjectionError::InjectionFailed(format!("Clipboard set failed: {}", e)))?;
+
+        debug!("Text copied to clipboard, sending Ctrl+V");
+
+        // Minimal delay to ensure clipboard is ready
+        thread::sleep(Duration::from_millis(10));
+
+        // Send Ctrl+V to paste
+        self.enigo
+            .key(Key::Control, Direction::Press)
+            .map_err(|e| InjectionError::InjectionFailed(e.to_string()))?;
+
+        self.enigo
+            .key(Key::Unicode('v'), Direction::Click)
+            .map_err(|e| InjectionError::InjectionFailed(e.to_string()))?;
+
+        self.enigo
+            .key(Key::Control, Direction::Release)
+            .map_err(|e| InjectionError::InjectionFailed(e.to_string()))?;
+
+        // Minimal delay after paste
+        thread::sleep(Duration::from_millis(20));
+
+        info!("Text pasted via Ctrl+V: {} chars", text.len());
         Ok(())
     }
 
@@ -190,6 +237,7 @@ mod tests {
         let config = InjectorConfig::default();
         assert_eq!(config.char_delay_ms, 0);
         assert!(!config.clear_selection);
+        assert!(config.use_clipboard); // Default to clipboard on Windows
     }
 
     #[test]
