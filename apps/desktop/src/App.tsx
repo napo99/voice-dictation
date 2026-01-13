@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window';
 import './App.css';
 
 // ============================================================================
@@ -160,11 +160,7 @@ function App() {
       const window = getCurrentWindow();
       const pos = await window.outerPosition();
 
-      await window.setPosition({
-        type: 'Physical',
-        x: pos.x + deltaX,
-        y: pos.y + deltaY,
-      });
+      await window.setPosition(new PhysicalPosition(pos.x + deltaX, pos.y + deltaY));
 
       setDragOffset({ x: e.screenX, y: e.screenY });
     },

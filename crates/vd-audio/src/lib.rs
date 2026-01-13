@@ -34,7 +34,7 @@ use crossbeam_channel::Sender;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use vd_core::{AudioChunk, AudioError, CHANNELS, SAMPLE_RATE};
 
 /// Configuration for audio capture

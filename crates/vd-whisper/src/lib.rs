@@ -145,7 +145,7 @@ impl WhisperTranscriber {
             // Get average probability for confidence calculation
             let n_tokens = state.full_n_tokens(i).unwrap_or(0);
             for j in 0..n_tokens {
-                if let Ok(prob) = state.full_get_token_p(i, j) {
+                if let Ok(prob) = state.full_get_token_prob(i, j) {
                     total_prob += prob;
                     prob_count += 1;
                 }
