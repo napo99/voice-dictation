@@ -63,6 +63,88 @@ WSL2 has fundamental limitations:
 
 ## 3. Windows Setup Instructions
 
+### Quick Check: Do I Already Have Everything?
+
+Run this in PowerShell to check what's installed:
+
+```powershell
+Write-Host "=== Checking Prerequisites ===" -ForegroundColor Cyan
+
+Write-Host "`n1. Node.js:" -NoNewline
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    Write-Host " OK - $(node --version)" -ForegroundColor Green
+} else {
+    Write-Host " MISSING" -ForegroundColor Red
+}
+
+Write-Host "2. npm:" -NoNewline
+if (Get-Command npm -ErrorAction SilentlyContinue) {
+    Write-Host " OK - $(npm --version)" -ForegroundColor Green
+} else {
+    Write-Host " MISSING" -ForegroundColor Red
+}
+
+Write-Host "3. Rust:" -NoNewline
+if (Get-Command rustc -ErrorAction SilentlyContinue) {
+    Write-Host " OK - $(rustc --version)" -ForegroundColor Green
+} else {
+    Write-Host " MISSING" -ForegroundColor Red
+}
+
+Write-Host "4. Cargo:" -NoNewline
+if (Get-Command cargo -ErrorAction SilentlyContinue) {
+    Write-Host " OK - $(cargo --version)" -ForegroundColor Green
+} else {
+    Write-Host " MISSING" -ForegroundColor Red
+}
+
+Write-Host "5. Git:" -NoNewline
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    Write-Host " OK - $(git --version)" -ForegroundColor Green
+} else {
+    Write-Host " MISSING" -ForegroundColor Red
+}
+
+Write-Host "6. Claude CLI:" -NoNewline
+if (Get-Command claude -ErrorAction SilentlyContinue) {
+    Write-Host " OK" -ForegroundColor Green
+} else {
+    Write-Host " MISSING (optional)" -ForegroundColor Yellow
+}
+
+Write-Host "7. VS Build Tools:" -NoNewline
+$vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vsWhere) {
+    $installed = & $vsWhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property displayName 2>$null
+    if ($installed) {
+        Write-Host " OK" -ForegroundColor Green
+    } else {
+        Write-Host " MISSING C++ workload" -ForegroundColor Red
+    }
+} else {
+    Write-Host " MISSING" -ForegroundColor Red
+}
+
+Write-Host "`n=== Done ===" -ForegroundColor Cyan
+```
+
+**Expected output if everything is installed:**
+```
+=== Checking Prerequisites ===
+1. Node.js: OK - v20.x.x
+2. npm: OK - 10.x.x
+3. Rust: OK - rustc 1.x.x
+4. Cargo: OK - cargo 1.x.x
+5. Git: OK - git version 2.x.x
+6. Claude CLI: OK
+7. VS Build Tools: OK
+=== Done ===
+```
+
+Only install what shows as MISSING.
+
+---
+
 ### Prerequisites
 
 #### 1. Node.js and npm
