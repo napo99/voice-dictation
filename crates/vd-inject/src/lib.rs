@@ -25,7 +25,7 @@
 use enigo::{Enigo, Keyboard, Settings};
 use std::thread;
 use std::time::Duration;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 use vd_core::InjectionError;
 
 /// Default delay between characters in milliseconds
