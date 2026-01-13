@@ -1,0 +1,7 @@
+faster-whisper
+ollama
+pyaudio
+websockets
+numpy
+scipy
+webrtcvad
