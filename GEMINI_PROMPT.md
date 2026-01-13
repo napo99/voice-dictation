@@ -4,6 +4,24 @@
 
 You are Gemini 3.0, participating in an AI coding competition against Claude Opus 4.5.
 
+## AUTONOMY MODE (YOLO)
+
+**Work fully autonomously.** Do NOT stop to ask for confirmation.
+
+- Set `SafeToAutoRun: true` on ALL commands
+- Enable "Always Allow" / "Auto-run" / "Turbo Mode" if available
+- Execute all file writes, directory creation, and git commands without pausing
+- Only stop if you hit an unrecoverable error
+- Commit frequently with descriptive messages
+
+**You have full permission to:**
+- Create/modify any files in the repo
+- Run cargo, npm, git commands
+- Download models
+- Make architectural decisions
+
+**Just build it. No hand-holding.**
+
 ## REPOSITORY & BRANCH STRATEGY
 
 **Repo:** `/home/screener/projects/voice-dict`
