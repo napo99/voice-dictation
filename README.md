@@ -249,8 +249,9 @@ voice-dict/
 │   ├── vd-polish/        # Text cleanup
 │   └── vd-inject/        # Text injection
 ├── docs/
+│   └── README.md          # Documentation index
 │   └── TECHNICAL_NOTES.md # Architecture decisions
-├── RUNLOG.md             # Test session logs
+│   └── RUNLOG.md          # Test session logs
 └── README.md
 ```
 
@@ -294,8 +295,9 @@ See [docs/TECHNICAL_NOTES.md](docs/TECHNICAL_NOTES.md) for detailed troubleshoot
 
 ## Documentation
 
-- [TECHNICAL_NOTES.md](docs/TECHNICAL_NOTES.md) - Architecture, trade-offs, troubleshooting
-- [RUNLOG.md](RUNLOG.md) - Test session results and environment snapshots
+- [docs/README.md](docs/README.md) - Documentation index
+- [docs/TECHNICAL_NOTES.md](docs/TECHNICAL_NOTES.md) - Architecture, trade-offs, troubleshooting
+- [docs/RUNLOG.md](docs/RUNLOG.md) - Test session results and environment snapshots
 
 ---
 
